@@ -1,2 +1,3 @@
-# ga4gh_workflow-clinic_gsoc-2026
-GA4GH ServiceInfo Sidecar
+# GA4GH ServiceInfo Sidecar
+
+Project idea for GSoC 2026
