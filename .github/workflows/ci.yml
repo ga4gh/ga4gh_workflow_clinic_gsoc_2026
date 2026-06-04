@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pr-title-check:
+    name: Validate PR Title
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Check PR Title Length and Conventional Commit Format
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          echo "Checking PR Title: $TITLE"
+          
+          # Check length (max 50 chars as requested by reviewer)
+          LENGTH=${#TITLE}
+          if [ $LENGTH -gt 50 ]; then
+            echo "Error: PR title is too long ($LENGTH characters). Max length is 50 characters."
+            exit 1
+          fi
+          
+          # Check conventional commit format
+          if [[ ! "$TITLE" =~ ^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_-]+\))?!?: .+$ ]]; then
+            echo "Error: PR title does not follow Conventional Commits formatting rules."
+            echo "Example: feat(parser): add nextflow support"
+            exit 1
+          fi
+          echo "PR title is valid!"
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project and dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run ruff (lint)
+        run: ruff check .
+
+      - name: Run ruff (format check)
+        run: ruff format --check .
+
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project and dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run mypy
+        run: mypy src/
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project and dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest tests/ --cov=workflow_clinic --cov-report=xml -v
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
