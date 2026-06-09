@@ -1,0 +1,33 @@
+name: Validate PR Title
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited]
+
+jobs:
+  pr-title-check:
+    name: Validate PR Title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR Title Length and Conventional Commit Format
+        shell: bash
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          echo "Checking PR Title: $TITLE"
+          
+          # Check length (max 50 chars as requested by reviewer)
+          LENGTH=${#TITLE}
+          if [ $LENGTH -gt 50 ]; then
+            echo "Error: PR title is too long ($LENGTH characters). Max length is 50 characters."
+            exit 1
+          fi
+          
+          # Check conventional commit format using a variable to prevent bash parser errors
+          REGEX='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_-]+\))?!?: .+$'
+          if [[ ! "$TITLE" =~ $REGEX ]]; then
+            echo "Error: PR title does not follow Conventional Commits formatting rules."
+            echo "Example: feat(parser): add nextflow support"
+            exit 1
+          fi
+          echo "PR title is valid!"
