@@ -1,4 +1,4 @@
-# Workflow Clinic – Project Implementation Summary
+# Workflow Clinic – Architecture
 
 ## Project Goal
 
@@ -28,10 +28,7 @@ Snakemake → WorkflowBundle
 Once converted, all downstream components operate on WorkflowBundle instead of
 language-specific syntax.
 
-This idea is inspired by the DAW Metamodel paper, which proposes a common representation
-for different workflow languages.
-
-### Architectural Principle
+This idea is inspired by the DAW Metamodel paper (Hilbrich et al., 2022; [PDF](https://api-depositonce.tu-berlin.de/server/api/core/bitstreams/3712c6d8-2bef-4528-ad75-1c4b3e667c3e/content)), which proposes a common representation for different workflow languages.
 
 > All workflow languages are converted into a common WorkflowBundle representation before
 > analysis. All downstream components operate on WorkflowBundle rather than language-specific
@@ -57,7 +54,7 @@ WorkflowBundle
 
 ---
 
-## Component 1: Parsers
+## Parsers
 
 The purpose of the parsers is to convert workflow files into WorkflowBundle objects.
 
@@ -70,7 +67,7 @@ workflow source files. Everything after parsing should operate only on WorkflowB
 
 ---
 
-## Component 2: WorkflowBundle
+## WorkflowBundle
 
 WorkflowBundle is the most important structure in the entire project.
 
@@ -183,7 +180,7 @@ This information is important for WorkflowHub, Dockstore, and GA4GH ecosystems.
 
 ---
 
-## Component 3: Rule Engine
+## Rule Engine
 
 The Rule Engine is the first analysis layer.
 
@@ -221,7 +218,7 @@ The Rule Engine is the first analysis layer.
 
 ---
 
-## Component 4: Optional AI Critic Layer
+## AI Critic (Optional)
 
 **Workflow Clinic must function completely without AI.** The Rule Engine is the primary
 analysis mechanism and provides all core diagnostics.
@@ -241,7 +238,7 @@ The project should remain **rule-first and AI-optional**.
 
 ---
 
-## Component 5: Doctor (Future Capability)
+## Doctor (Future)
 
 The Doctor component proposes fixes.
 
