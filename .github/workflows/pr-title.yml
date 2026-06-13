@@ -3,7 +3,7 @@ name: Validate PR Title
 on:
   pull_request:
     branches: [main]
-    types: [opened, edited]
+    types: [opened, edited, synchronize]
 
 jobs:
   pr-title-check:
