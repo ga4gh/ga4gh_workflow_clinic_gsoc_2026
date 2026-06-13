@@ -6,7 +6,7 @@ Your contributions are welcome and necessary. Please use the
 - Report bugs
 - Propose or implement features
 - Submit code changes / fixes
-- Discuss code
+- Discuss proposed changes
 
 See here for a [short tutorial for GitHub's issue tracking
 system](https://guides.github.com/features/issues/).
@@ -14,8 +14,7 @@ system](https://guides.github.com/features/issues/).
 Please adhere to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 Please *do not* ask usage questions, installation problems (unless they appear
-to be bugs) etc. via the GitHub issue tracker. We will set up a dedicated Q&A
-channel soon.
+to be bugs) etc. via the GitHub issue tracker. Instead, please use the [GitHub Discussions forum](https://github.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026/discussions) to ask questions and start conversations.
 
 ## Reporting bugs
 
