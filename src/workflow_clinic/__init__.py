@@ -1,6 +1,8 @@
-"""
-Workflow Clinic: AI-Powered Cloudification of Bioinformatics Workflows.
-GA4GH GSoC 2026 — Revaa Rathore
+"""Workflow Clinic: AI-Powered Cloudification of Bioinformatics Workflows.
+
+This package provides tools for parsing, modeling, and validating scientific
+workflows (such as Nextflow and Snakemake) to ease cloud deployment and
+integration.
 """
 
 import importlib.metadata

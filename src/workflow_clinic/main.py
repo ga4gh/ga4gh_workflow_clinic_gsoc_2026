@@ -1,5 +1,7 @@
-"""
-Main entrypoint for the Workflow Clinic CLI.
+"""Main entrypoint for the Workflow Clinic CLI.
+
+This module defines the Typer application and CLI commands for interacting with
+the Workflow Clinic system.
 """
 
 import typer
@@ -11,8 +13,11 @@ app = typer.Typer(
 
 
 @app.callback()
-def main():
-    """Workflow Clinic CLI tool."""
+def main() -> None:
+    """Run the main command-line interface for Workflow Clinic.
+
+    This function acts as the entrypoint callback for the Typer CLI.
+    """
 
 
 if __name__ == "__main__":
