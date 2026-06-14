@@ -34,6 +34,8 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "vulture>=2.11",
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
 ]
 
 [project.scripts]

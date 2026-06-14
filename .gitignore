@@ -40,3 +40,6 @@ Thumbs.db
 # Environment files
 .env
 .env.local
+
+# MkDocs build directory
+site/

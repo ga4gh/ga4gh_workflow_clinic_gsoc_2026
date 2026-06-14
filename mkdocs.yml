@@ -1,0 +1,58 @@
+site_name: Workflow Clinic
+site_description: AI-Powered Cloudification of Bioinformatics Workflows
+site_author: GA4GH
+site_url: https://ga4gh.github.io/ga4gh_workflow_clinic_gsoc_2026/
+
+repo_name: ga4gh/ga4gh_workflow_clinic_gsoc_2026
+repo_url: https://github.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    # Light Mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark Mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Architecture: architecture/architecture.md
