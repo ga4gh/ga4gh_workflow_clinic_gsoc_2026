@@ -36,7 +36,12 @@ dev = [
     "vulture>=2.11",
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
+<<<<<<< HEAD
     "mkdocstrings[python]>=0.24.0",
+=======
+    "python-semantic-release>=9.0.0",
+    "build>=1.0.0",
+>>>>>>> 0adcbe4 (docs: setup API reference and release pipeline)
 ]
 
 [project.scripts]
@@ -83,3 +88,31 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+
+# --- Python Semantic Release ---
+[tool.semantic_release]
+version_toml = [
+    "pyproject.toml:project.version"
+]
+commit_parser = "conventional"
+major_on_zero = true
+tag_format = "v{version}"
+commit_author = "github-actions <action@github.com>"
+
+[tool.semantic_release.branches.main]
+match = "(main|master)"
+prerelease = false
+
+[tool.semantic_release.changelog]
+
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "CHANGELOG.md"
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = ["build", "chore", "ci", "docs", "feat", "fix", "perf", "style", "refactor", "test"]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
+
+[tool.semantic_release.publish]
+dist_glob_patterns = ["dist/*"]
+upload_to_vcs_release = true
