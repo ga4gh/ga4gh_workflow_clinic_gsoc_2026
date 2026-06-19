@@ -68,10 +68,16 @@ jobs:
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "action@github.com"
-          semantic-release version
+          # Calculate version, tag, push tag, and create GitHub release -- but DO NOT commit to main.
+          semantic-release version --no-commit --tag --push --vcs-release
 
       - name: Build distribution packages
         run: python -m build
+
+      - name: Generate Artifact Attestation
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist/*"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
