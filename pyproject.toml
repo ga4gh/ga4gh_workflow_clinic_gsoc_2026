@@ -45,8 +45,9 @@ dev = [
 workflow-clinic = "workflow_clinic.main:app"
 
 [project.urls]
-Homepage = "https://github.com/revaarathore11/ga4gh_workflow_clinic_gsoc_2026-"
-Issues = "https://github.com/revaarathore11/ga4gh_workflow_clinic_gsoc_2026-/issues"
+Homepage = "https://github.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026"
+Issues = "https://github.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026/issues"
+Changelog = "https://github.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026/releases"
 
 [tool.setuptools.packages.find]
 where = ["src"]
