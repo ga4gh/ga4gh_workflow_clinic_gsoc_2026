@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 # Matches numbers (int or float) optionally followed by separator (spaces or single dot)
 # and a case-insensitive memory unit (B, KB, MB, GB, TB, PB, KiB, MiB, GiB, TiB, K, M, G, T)
 MEMORY_PATTERN = re.compile(
-    r"^\d+(?:\.\d+)?\s*\.?(?:[kKmMgGtTpP][iI]?[bB]|[bB]|[kKmMgGtT])?$"
+    r"^\d+(?:\.\d+)?(?:\s*\.?(?:[kKmMgGtTpP][iI]?[bB]|[bB]|[kKmMgGtT]))?$"
 )
 
 

@@ -70,6 +70,7 @@ def test_invalid_cpu_value_type():
         "large",  # Plain text
         "16 GBs",  # Invalid plural unit
         "16GB B",  # Extra space and characters
+        "8.",  # Trailing dot without unit
     ],
 )
 def test_invalid_memory_formats(invalid_memory):
