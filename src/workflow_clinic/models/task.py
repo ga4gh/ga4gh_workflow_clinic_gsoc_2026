@@ -4,7 +4,15 @@ This module defines the Task and TaskResources models representing execution
 steps within a workflow and their corresponding hardware and software needs.
 """
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
+
+# Matches numbers (int or float) optionally followed by separator (spaces or single dot)
+# and a case-insensitive memory unit (B, KB, MB, GB, TB, PB, KiB, MiB, GiB, TiB, K, M, G, T)
+MEMORY_PATTERN = re.compile(
+    r"^\d+(?:\.\d+)?\s*\.?(?:[kKmMgGtTpP][iI]?[bB]|[bB]|[kKmMgGtT])?$"
+)
 
 
 class TaskResources(BaseModel):
@@ -16,9 +24,24 @@ class TaskResources(BaseModel):
         container: Name or URI of the container image used for execution, or None.
     """
 
-    cpus: int | None = None
+    cpus: int | None = Field(default=None, gt=0)
     memory: str | None = None
     container: str | None = None
+
+    @field_validator("memory")
+    @classmethod
+    def validate_memory(cls, v: str | None) -> str | None:
+        """Validate memory string format."""
+        if v is None:
+            return v
+        stripped = v.strip()
+        if not MEMORY_PATTERN.match(stripped):
+            msg = (
+                f"invalid memory format: '{v}'. Must be a number optionally "
+                f"followed by unit (e.g., '8 GB', '512MB', '4.GiB', '8192')"
+            )
+            raise ValueError(msg)
+        return stripped
 
 
 class Task(BaseModel):
@@ -39,3 +62,21 @@ class Task(BaseModel):
     resources: TaskResources = Field(default_factory=TaskResources)
     inputs: list[str] = Field(default_factory=list)
     outputs: list[str] = Field(default_factory=list)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        """Ensure task id is not empty or containing only whitespace."""
+        if not v.strip():
+            msg = "id must not be empty or contain only whitespace"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Ensure task name is not empty or containing only whitespace."""
+        if not v.strip():
+            msg = "name must not be empty or contain only whitespace"
+            raise ValueError(msg)
+        return v
