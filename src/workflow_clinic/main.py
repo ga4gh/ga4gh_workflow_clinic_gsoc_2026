@@ -13,6 +13,7 @@ app = typer.Typer(
     name="workflow-clinic",
     help="AI-Powered Cloudification of Bioinformatics Workflows",
     invoke_without_command=True,
+    no_args_is_help=True,
 )
 
 
