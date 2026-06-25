@@ -1,6 +1,7 @@
 """Unit tests for the application logging configuration."""
 
 import logging
+import re
 import sys
 
 from typer.testing import CliRunner
@@ -36,9 +37,16 @@ def test_logging_setup() -> None:
         root_logger.setLevel(original_level)
 
 
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from a string."""
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_escape.sub("", text)
+
+
 def test_cli_help_on_no_args() -> None:
     """Verify that the CLI shows help when invoked with no arguments."""
     result = runner.invoke(app, [])
     assert result.exit_code == 2  # noqa: PLR2004
-    assert "Usage: workflow-clinic" in result.output
-    assert "--help" in result.output
+    clean_output = _strip_ansi(result.output)
+    assert "Usage: workflow-clinic" in clean_output
+    assert "--help" in clean_output
