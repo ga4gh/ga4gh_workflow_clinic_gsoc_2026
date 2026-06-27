@@ -6,7 +6,7 @@ import sys
 
 from typer.testing import CliRunner
 
-from workflow_clinic.main import app, main
+from workflow_clinic.cli import app, main
 
 runner = CliRunner()
 
