@@ -30,8 +30,11 @@ class ParserRegistry:
         Raises:
             ParserError: If parser_class does not inherit from BaseParser
         """
-        if not issubclass(parser_class, BaseParser):
-            msg = f"Parser class {parser_class.__name__} must inherit from BaseParser"
+        if not isinstance(parser_class, type) or not issubclass(
+            parser_class, BaseParser
+        ):
+            parser_name = getattr(parser_class, "__name__", repr(parser_class))
+            msg = f"Parser class {parser_name} must inherit from BaseParser"
             raise ParserError(msg)
         cls._parsers[name] = parser_class
 

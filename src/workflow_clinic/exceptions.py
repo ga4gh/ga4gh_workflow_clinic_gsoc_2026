@@ -1,7 +1,7 @@
 """Custom exceptions for Workflow Clinic.
 
 This module defines the exception hierarchy for domain-specific error handling
-thought the Workflow Clinic application. All exceptions inherit from the base
+throughout the Workflow Clinic application. All exceptions inherit from the base
 WorkflowClinicError class, enabling specific exception catching for different
 error scenarios.
 

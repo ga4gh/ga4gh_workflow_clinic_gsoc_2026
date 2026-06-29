@@ -80,6 +80,11 @@ def test_registry_registration_and_retrieval() -> None:
         ParserRegistry.register("invalid", InvalidParser)  # type: ignore[arg-type]
     assert "must inherit from BaseParser" in str(exc_info.value)
 
+    # Test registering parser instance (instead of class)
+    with pytest.raises(ParserError) as exc_info:
+        ParserRegistry.register("mock_instance", MockParser())  # type: ignore[arg-type]
+    assert "must inherit from BaseParser" in str(exc_info.value)
+
     # Test get unregistered parser name
     with pytest.raises(ParserError) as exc_info:
         ParserRegistry.get_parser("unknown")
