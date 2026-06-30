@@ -39,6 +39,35 @@ process BAD_PROCESS {
     // Missing closing brace for process
 """
 
+BASH_BRACES_CONTENT = """
+process ALIGN {
+    container 'biocontainers/bwa:v0.7.17'
+    cpus 4
+    memory '16 GB'
+
+    script:
+    \"\"\"
+    bwa mem -t ${task.cpus} ref.fa reads.fq > aligned.sam
+    if [ -f aligned.sam ]; then
+        echo "alignment complete"
+    fi
+    \"\"\"
+}
+"""
+
+INVALID_RESOURCES_CONTENT = """
+process BAD_RESOURCES {
+    container 'biocontainers/tool:v1'
+    cpus 0
+    memory '8 GB'
+
+    script:
+    \"\"\"
+    echo "hello"
+    \"\"\"
+}
+"""
+
 
 def test_can_parse_methods(tmp_path: Path) -> None:
     """Verify can_parse behavior for files and directories."""
@@ -153,3 +182,31 @@ def test_error_handling_scenarios(tmp_path: Path) -> None:
     with pytest.raises(InvalidWorkflowError) as exc_info:
         parser.parse(bad_file)
     assert "Mismatched curly braces" in str(exc_info.value)
+
+
+def test_bash_braces_in_script(tmp_path: Path) -> None:
+    """Verify parser handles curly braces inside bash script blocks correctly."""
+    nf_file = tmp_path / "bash_test.nf"
+    nf_file.write_text(BASH_BRACES_CONTENT)
+
+    parser = NextflowParser()
+    bundle = parser.parse(nf_file)
+
+    # Should successfully parse without mismatched brace errors
+    assert len(bundle.tasks) == 1
+    align = bundle.tasks[0]
+    assert align.name == "ALIGN"
+    assert align.resources.container == "biocontainers/bwa:v0.7.17"
+    assert align.resources.cpus == 4  # noqa: PLR2004
+    assert align.resources.memory == "16 GB"
+
+
+def test_invalid_resource_values(tmp_path: Path) -> None:
+    """Verify parser wraps Pydantic ValidationError in InvalidWorkflowError."""
+    nf_file = tmp_path / "bad_resources.nf"
+    nf_file.write_text(INVALID_RESOURCES_CONTENT)
+
+    parser = NextflowParser()
+    with pytest.raises(InvalidWorkflowError) as exc_info:
+        parser.parse(nf_file)
+    assert "Invalid resource values" in str(exc_info.value)

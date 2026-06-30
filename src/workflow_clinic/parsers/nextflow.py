@@ -52,31 +52,74 @@ class NextflowParser(BaseParser):
         msg = f"Unsupported path type: {path}"
         raise ParserError(msg)
 
+    def _skip_comment(
+        self, content: str, idx: int, length: int, body_chars: list[str]
+    ) -> int:
+        """Skip a single-line comment, appending characters to body_chars."""
+        while idx < length and content[idx] != "\n":
+            body_chars.append(content[idx])
+            idx += 1
+        return idx
+
+    def _skip_quoted_string(
+        self, content: str, idx: int, length: int, body_chars: list[str]
+    ) -> int:
+        """Skip a quoted string, appending characters to body_chars."""
+        quote_char = content[idx]
+        body_chars.append(quote_char)
+        idx += 1
+        while idx < length and content[idx] != quote_char:
+            body_chars.append(content[idx])
+            idx += 1
+        if idx < length:
+            body_chars.append(content[idx])
+            idx += 1
+        return idx
+
+    def _extract_process_body(self, content: str, start_idx: int) -> str | None:
+        """Extract process body text, skipping braces inside strings and comments."""
+        brace_count = 1
+        idx = start_idx
+        length = len(content)
+        body_chars: list[str] = []
+
+        while idx < length:
+            char = content[idx]
+
+            # Skip single-line comments
+            if char == "/" and idx + 1 < length and content[idx + 1] == "/":
+                idx = self._skip_comment(content, idx, length, body_chars)
+                continue
+
+            # Skip quoted strings (single and double quotes)
+            if char in ("'", '"'):
+                idx = self._skip_quoted_string(content, idx, length, body_chars)
+                continue
+
+            if char == "{":
+                brace_count += 1
+            elif char == "}":
+                brace_count -= 1
+                if brace_count == 0:
+                    break
+
+            body_chars.append(char)
+            idx += 1
+
+        if brace_count != 0:
+            return None
+        return "".join(body_chars)
+
     def _parse_processes(self, content: str) -> list[Task]:
         """Parse process blocks from the Nextflow script content."""
         tasks = []
         for match in PROCESS_PATTERN.finditer(content):
             process_name = match.group(1)
 
-            # Extract the process body by counting matching braces
-            start_idx = match.end()
-            brace_count = 1
-            body_chars = []
-            for idx in range(start_idx, len(content)):
-                char = content[idx]
-                if char == "{":
-                    brace_count += 1
-                elif char == "}":
-                    brace_count -= 1
-                    if brace_count == 0:
-                        break
-                body_chars.append(char)
-
-            if brace_count != 0:
+            body = self._extract_process_body(content, match.end())
+            if body is None:
                 msg = f"Mismatched curly braces in process definition: {process_name}"
                 raise InvalidWorkflowError(msg)
-
-            body = "".join(body_chars)
 
             # Search for container image string
             container_match = CONTAINER_PATTERN.search(body)
@@ -90,19 +133,22 @@ class NextflowParser(BaseParser):
             memory_match = MEMORY_PATTERN.search(body)
             memory = memory_match.group(1) if memory_match else None
 
-            # Assemble Resources
-            resources = TaskResources(
-                cpus=cpus,
-                memory=memory,
-                container=container_image,
-            )
+            # Assemble Resources and Task, wrapping validation errors
+            try:
+                resources = TaskResources(
+                    cpus=cpus,
+                    memory=memory,
+                    container=container_image,
+                )
+                task = Task(
+                    id=process_name,
+                    name=process_name,
+                    resources=resources,
+                )
+            except Exception as e:
+                msg = f"Invalid resource values in process '{process_name}': {e}"
+                raise InvalidWorkflowError(msg) from e
 
-            # Create Task
-            task = Task(
-                id=process_name,
-                name=process_name,
-                resources=resources,
-            )
             tasks.append(task)
         return tasks
 
