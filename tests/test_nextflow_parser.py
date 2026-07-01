@@ -176,12 +176,12 @@ def test_error_handling_scenarios(tmp_path: Path) -> None:
         parser.parse(empty_file)
     assert "Workflow file is empty" in str(exc_info.value)
 
-    # Scenario 4: Mismatched curly braces
+    # Scenario 4: Mismatched curly braces (raises AST syntax error)
     bad_file = tmp_path / "bad.nf"
     bad_file.write_text(MISMATCHED_BRACES_CONTENT)
     with pytest.raises(InvalidWorkflowError) as exc_info:
         parser.parse(bad_file)
-    assert "Mismatched curly braces" in str(exc_info.value)
+    assert "Syntax error in Nextflow file" in str(exc_info.value)
 
 
 def test_bash_braces_in_script(tmp_path: Path) -> None:
@@ -210,3 +210,32 @@ def test_invalid_resource_values(tmp_path: Path) -> None:
     with pytest.raises(InvalidWorkflowError) as exc_info:
         parser.parse(nf_file)
     assert "Invalid resource values" in str(exc_info.value)
+
+
+def test_parse_simple_nf_file(tmp_path: Path) -> None:
+    """Verify end-to-end parsing of a simple Nextflow file."""
+    real_content = """
+    process BWA_ALIGN {
+        container 'nf-core/bwa:0.7.17'
+        cpus 8
+        memory '32 GB'
+
+        script:
+        \"\"\"
+        bwa mem -t 8 ref.fa reads.fq > aligned.sam
+        \"\"\"
+    }
+    """
+    nf_file = tmp_path / "real_workflow.nf"
+    nf_file.write_text(real_content)
+
+    parser = NextflowParser()
+    bundle = parser.parse(nf_file)
+
+    assert bundle.metadata.name == "real_workflow"
+    assert len(bundle.tasks) == 1
+    task = bundle.tasks[0]
+    assert task.name == "BWA_ALIGN"
+    assert task.resources.container == "nf-core/bwa:0.7.17"
+    assert task.resources.cpus == 8  # noqa: PLR2004
+    assert task.resources.memory == "32 GB"

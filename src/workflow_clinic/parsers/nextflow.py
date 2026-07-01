@@ -1,26 +1,24 @@
 """Nextflow workflow parser implementation.
 
 This module parses Nextflow files (.nf) and directories containing a main.nf
-file, extracting metadata and processes into a standard WorkflowBundle.
+file, extracting metadata and processes into a standard WorkflowBundle using AST.
 """
 
-import re
 from pathlib import Path
+from typing import Any
+
+from groovy_parser.parser import parse_and_digest_groovy_content
+from lark.exceptions import LarkError
+from pydantic import ValidationError
 
 from workflow_clinic.exceptions import InvalidWorkflowError, ParserError
 from workflow_clinic.models import WorkflowBundle, WorkflowMetadata
 from workflow_clinic.models.task import Task, TaskResources
 from workflow_clinic.parsers.base import BaseParser
 
-# Regex patterns for parsing Nextflow elements
-PROCESS_PATTERN = re.compile(r"process\s+([A-Za-z0-9_]+)\s*\{")
-CONTAINER_PATTERN = re.compile(r"container\s*=?\s*['\"]([^'\"]+)['\"]")
-CPUS_PATTERN = re.compile(r"cpus\s*=?\s*(\d+)")
-MEMORY_PATTERN = re.compile(r"memory\s*=?\s*['\"]([^'\"]+)['\"]")
-
 
 class NextflowParser(BaseParser):
-    """Parser implementation for Nextflow workflows."""
+    """Parser implementation for Nextflow workflows using Abstract Syntax Trees."""
 
     @classmethod
     def can_parse(cls, path: Path) -> bool:
@@ -52,91 +50,115 @@ class NextflowParser(BaseParser):
         msg = f"Unsupported path type: {path}"
         raise ParserError(msg)
 
-    def _skip_comment(
-        self, content: str, idx: int, length: int, body_chars: list[str]
-    ) -> int:
-        """Skip a single-line comment, appending characters to body_chars."""
-        while idx < length and content[idx] != "\n":
-            body_chars.append(content[idx])
-            idx += 1
-        return idx
-
-    def _skip_quoted_string(
-        self, content: str, idx: int, length: int, body_chars: list[str]
-    ) -> int:
-        """Skip a quoted string, appending characters to body_chars."""
-        quote_char = content[idx]
-        body_chars.append(quote_char)
-        idx += 1
-        while idx < length and content[idx] != quote_char:
-            body_chars.append(content[idx])
-            idx += 1
-        if idx < length:
-            body_chars.append(content[idx])
-            idx += 1
-        return idx
-
-    def _extract_process_body(self, content: str, start_idx: int) -> str | None:
-        """Extract process body text, skipping braces inside strings and comments."""
-        brace_count = 1
-        idx = start_idx
-        length = len(content)
-        body_chars: list[str] = []
-
-        while idx < length:
-            char = content[idx]
-
-            # Skip single-line comments
-            if char == "/" and idx + 1 < length and content[idx + 1] == "/":
-                idx = self._skip_comment(content, idx, length, body_chars)
-                continue
-
-            # Skip quoted strings (single and double quotes)
-            if char in ("'", '"'):
-                idx = self._skip_quoted_string(content, idx, length, body_chars)
-                continue
-
-            if char == "{":
-                brace_count += 1
-            elif char == "}":
-                brace_count -= 1
-                if brace_count == 0:
-                    break
-
-            body_chars.append(char)
-            idx += 1
-
-        if brace_count != 0:
+    def _find_leaf_value(self, node: Any, leaf_types: list[str]) -> str | None:
+        """Recursively search for a leaf node of specified types and return its value."""
+        if not isinstance(node, dict):
             return None
-        return "".join(body_chars)
+        if "leaf" in node and node["leaf"] in leaf_types:
+            return node.get("value")
+        for child in node.get("children", []):
+            val = self._find_leaf_value(child, leaf_types)
+            if val is not None:
+                return val
+        return None
 
-    def _parse_processes(self, content: str) -> list[Task]:
-        """Parse process blocks from the Nextflow script content."""
+    def _collect_processes(self, node: Any) -> list[dict[str, Any]]:
+        """Collect all command_expression nodes representing process declarations."""
+        results: list[dict[str, Any]] = []
+        if not isinstance(node, dict):
+            return results
+        if "rule" in node and "command_expression" in node["rule"]:
+            children = node.get("children", [])
+            # A process command requires at least 2 components:
+            # the 'process' keyword/token and the process body/name.
+            if len(children) >= 2:  # noqa: PLR2004
+                first_val = self._find_leaf_value(children[0], ["IDENTIFIER"])
+                if first_val == "process":
+                    results.append(node)
+        for child in node.get("children", []):
+            results.extend(self._collect_processes(child))
+        return results
+
+    def _collect_block_statements(self, node: Any) -> list[dict[str, Any]]:
+        """Collect all block_statement nodes under the closure block.
+
+        We return early when finding a block_statement node to collect process
+        directives without recursing into nested closures (e.g. within scripts).
+        """
+        results: list[dict[str, Any]] = []
+        if not isinstance(node, dict):
+            return results
+        if "rule" in node and "block_statement" in node["rule"]:
+            results.append(node)
+            return results
+        for child in node.get("children", []):
+            results.extend(self._collect_block_statements(child))
+        return results
+
+    def _extract_directives(
+        self, p_node: dict[str, Any]
+    ) -> tuple[str | None, str | None, str | None]:
+        """Extract container, cpus, and memory directive values from a process node."""
+        container_image = None
+        cpus = None
+        memory = None
+
+        statements = self._collect_block_statements(p_node)
+        for s in statements:
+            s_children = s.get("children", [])
+            if not s_children:
+                continue
+
+            directive_name = self._find_leaf_value(s_children[0], ["IDENTIFIER"])
+            if directive_name not in ("container", "cpus", "memory"):
+                continue
+
+            # Search the remaining arguments for any string or numeric literal
+            literal_types = [
+                "STRING_LITERAL",
+                "STRING_LITERAL_PART",
+                "FLOATING_POINT_LITERAL",
+                "INTEGER_LITERAL",
+                "NUMERIC_LITERAL",
+            ]
+            val = self._find_leaf_value({"children": s_children[1:]}, literal_types)
+            if val is not None:
+                if directive_name == "container":
+                    container_image = val
+                elif directive_name == "cpus":
+                    cpus = val
+                elif directive_name == "memory":
+                    memory = val
+
+        return container_image, cpus, memory
+
+    def _parse_processes(self, ast: Any) -> list[Task]:
+        """Traverse the AST to extract processes and map them to Task structures."""
         tasks = []
-        for match in PROCESS_PATTERN.finditer(content):
-            process_name = match.group(1)
+        processes = self._collect_processes(ast)
+        for p in processes:
+            children = p.get("children", [])
+            # The second child contains the process identifier/name
+            process_name = self._find_leaf_value(
+                children[1], ["CAPITALIZED_IDENTIFIER", "IDENTIFIER"]
+            )
+            if not process_name:
+                continue
 
-            body = self._extract_process_body(content, match.end())
-            if body is None:
-                msg = f"Mismatched curly braces in process definition: {process_name}"
-                raise InvalidWorkflowError(msg)
+            container_image, cpus, memory = self._extract_directives(p)
 
-            # Search for container image string
-            container_match = CONTAINER_PATTERN.search(body)
-            container_image = container_match.group(1) if container_match else None
-
-            # Search for CPUs limit
-            cpus_match = CPUS_PATTERN.search(body)
-            cpus = int(cpus_match.group(1)) if cpus_match else None
-
-            # Search for Memory allocation
-            memory_match = MEMORY_PATTERN.search(body)
-            memory = memory_match.group(1) if memory_match else None
-
-            # Assemble Resources and Task, wrapping validation errors
+            # Construct resources and Task models
             try:
+                cpus_val = None
+                if cpus is not None:
+                    try:
+                        cpus_val = int(cpus)
+                    except ValueError:
+                        # Retain raw value so TaskResources validator raises validation error
+                        cpus_val = cpus  # type: ignore[assignment]
+
                 resources = TaskResources(
-                    cpus=cpus,
+                    cpus=cpus_val,
                     memory=memory,
                     container=container_image,
                 )
@@ -145,7 +167,7 @@ class NextflowParser(BaseParser):
                     name=process_name,
                     resources=resources,
                 )
-            except Exception as e:
+            except (ValueError, ValidationError) as e:
                 msg = f"Invalid resource values in process '{process_name}': {e}"
                 raise InvalidWorkflowError(msg) from e
 
@@ -183,7 +205,16 @@ class NextflowParser(BaseParser):
             msg = f"Workflow file is empty: {script_file}"
             raise InvalidWorkflowError(msg)
 
-        tasks = self._parse_processes(content)
+        try:
+            ast = parse_and_digest_groovy_content(content)
+        except LarkError as e:
+            msg = f"Syntax error in Nextflow file {script_file}: {e}"
+            raise InvalidWorkflowError(msg) from e
+        except Exception as e:
+            msg = f"Failed to parse Nextflow file {script_file}: {e}"
+            raise ParserError(msg) from e
+
+        tasks = self._parse_processes(ast)
         metadata = WorkflowMetadata(name=script_file.stem)
 
         return WorkflowBundle(
