@@ -1,0 +1,280 @@
+# Development Guide: Creating New Workflow Parsers
+
+This guide is for contributors who want to understand how parsing works in
+Workflow Clinic, use the parser layer programmatically, or add support for a
+new workflow language (e.g. Snakemake, CWL, WDL).
+
+## Table of Contents
+
+1. [Overview of Parsing Architecture](#1-overview-of-parsing-architecture)
+2. [Using Parsers in Python (Library Imports)](#2-using-parsers-in-python-library-imports)
+3. [Parsing Workflows via CLI](#3-parsing-workflows-via-cli)
+4. [How to Write a New Parser Class](#4-how-to-write-a-new-parser-class)
+5. [Common Pitfalls](#5-common-pitfalls)
+6. [Related Files](#6-related-files)
+
+---
+
+## 1. Overview of Parsing Architecture
+
+All workflow files (e.g. Nextflow, Snakemake) must be parsed into a common
+intermediate representation called the **`WorkflowBundle`**. The parser layer
+is the only part of the codebase that interacts directly with
+language-specific syntax — everything downstream (rule engine, AI Critic
+agents, CLI) only ever sees a `WorkflowBundle`.
+
+```
+Workflow Files (Nextflow/Snakemake)
+      ↓
+   Parsers (BaseParser implementations)
+      ↓
+WorkflowBundle (Tasks + Resources + Metadata)
+      ↓
+ Rule Engine (diagnostics check)
+```
+
+### The `BaseParser` contract
+
+Every parser must implement this interface (`src/workflow_clinic/parsers/base.py`):
+
+```python
+from abc import ABC, abstractmethod
+from pathlib import Path
+from workflow_clinic.models import WorkflowBundle
+
+class BaseParser(ABC):
+    @classmethod
+    @abstractmethod
+    def can_parse(cls, path: Path) -> bool:
+        """Return True if this parser can handle the given file/directory."""
+
+    @abstractmethod
+    def parse(self, path: Path, entrypoint: str | None = None) -> WorkflowBundle:
+        """Parse the workflow and return a WorkflowBundle.
+
+        Must raise InvalidWorkflowError (not the raw underlying exception)
+        on any syntax or structural error.
+        """
+```
+
+---
+
+## 2. Using Parsers in Python (Library Imports)
+
+The `ParserRegistry` automatically routes a workflow file or directory to the
+correct parser based on `can_parse()`.
+
+```python
+from pathlib import Path
+from workflow_clinic.parsers import ParserRegistry
+from workflow_clinic.exceptions import InvalidWorkflowError
+
+workflow_path = Path("tests/fixtures/dummy.nf")
+
+# 1. Dynamically detect which parser is compatible with the path
+parser_name = ParserRegistry.detect_parser(workflow_path)
+print(f"Detected parser: {parser_name}")
+
+# 2. Retrieve the registered parser instance
+parser = ParserRegistry.get_parser(parser_name)
+
+# 3. Parse the file into a common WorkflowBundle
+try:
+    bundle = parser.parse(workflow_path)
+except InvalidWorkflowError as e:
+    print(f"Failed to parse workflow: {e}")
+    raise
+
+# 4. Walk the extracted tasks and resources
+print(f"Workflow name: {bundle.metadata.name}")
+for task in bundle.tasks:
+    print(f"Task: {task.name}")
+    print(f"  Container: {task.resources.container}")
+    print(f"  CPUs: {task.resources.cpus}")
+    print(f"  Memory: {task.resources.memory}")
+```
+
+**Actual output** (verified against `tests/fixtures/dummy.nf`):
+
+```text
+Detected parser: nextflow
+Workflow name: dummy
+Task: FASTQC
+  Container: quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0
+  CPUs: 2
+  Memory: 4
+Task: TRIM_READS
+  Container: quay.io/biocontainers/trim-galore:0.6.10--hdfd78af_0
+  CPUs: 4
+  Memory: 8 GB
+Task: ALIGN
+  Container: quay.io/biocontainers/bwa:0.7.17--hed695b0_7
+  CPUs: 8
+  Memory: 16 GB
+```
+
+> **Known limitation — closure-based directives:** FASTQC declares
+> `memory { 4.GB * task.attempt }`, a Groovy closure. The AST walker does
+> **not** evaluate closures; it performs a depth-first search and returns
+> the first numeric literal it finds (`4`), ignoring unit suffixes (`.GB`)
+> and arithmetic (`* task.attempt`). This means `memory { 4.GB * task.attempt }`
+> and `memory { 4.GB * task.attempt * 2 }` both produce `Memory: 4`.
+> Plain-string directives like `memory "8 GB"` are extracted verbatim and
+> retain their units. Full closure evaluation is a planned improvement.
+
+### Why `dummy.nf` looks the way it does
+
+`tests/fixtures/dummy.nf` is modeled on real **nf-core** DSL2 pipelines rather
+than a hand-simplified example, so it exercises the same edge cases a real
+workflow would:
+
+- **Diverse directive formats** — `cpus`, plain-string memory (`"8 GB"`),
+  and closure-based `memory { 4.GB * task.attempt }`.
+- **Named outputs** — `emit:` syntax, common in nf-core modules and a
+  frequent source of AST-walker bugs.
+- **Realistic interpolation** — `"${params.outdir}/trimmed"`, `baseDir`
+  references, instead of hardcoded literals.
+- **Compliance baseline** — every process has a `container`, `tag`, `cpus`, and
+  `memory`, so this fixture should produce zero findings when run through
+  the Rule Engine. (A second fixture with intentional gaps — missing
+  container, hardcoded path — is planned for the Rule Engine PR to test the
+  opposite case.)
+
+---
+
+## 3. Parsing Workflows via CLI
+
+> **Planned for Phase 3** — not yet implemented.
+> We do not expose a low-level `parse` subcommand to end-users. Parsing is
+> invoked internally by higher-level commands such as `diagnose`/`check`,
+> which are not yet part of this PR.
+
+```bash
+# Not yet available — shown for reference
+workflow-clinic diagnose tests/fixtures/dummy.nf
+```
+
+Once implemented, the command handler will: resolve the workspace path →
+`ParserRegistry.detect_parser(path)` → `parser.parse(path)` → pass the
+resulting `WorkflowBundle` into the Rule Engine runner.
+
+---
+
+## 4. How to Write a New Parser Class
+
+To add support for a new workflow language (Snakemake, CWL, WDL, ...):
+
+### Step 1: Create the Parser Module
+
+Create a new file under `src/workflow_clinic/parsers/`, e.g.
+`src/workflow_clinic/parsers/snakemake.py`, inheriting from `BaseParser`:
+
+```python
+from pathlib import Path
+from workflow_clinic.parsers.base import BaseParser
+from workflow_clinic.exceptions import InvalidWorkflowError
+from workflow_clinic.models import WorkflowBundle, WorkflowMetadata
+
+class SnakemakeParser(BaseParser):
+    """Parser implementation for Snakemake workflows."""
+
+    @classmethod
+    def can_parse(cls, path: Path) -> bool:
+        if path.is_file():
+            return path.name == "Snakefile" or path.suffix == ".smk"
+        return False
+
+    def parse(self, path: Path, entrypoint: str | None = None) -> WorkflowBundle:
+        try:
+            # Custom parsing logic here...
+            metadata = WorkflowMetadata(name=path.stem)
+            tasks = []  # Populate with Task structures
+        except Exception as exc:
+            raise InvalidWorkflowError(
+                f"Failed to parse {path}: {exc}"
+            ) from exc
+
+        return WorkflowBundle(metadata=metadata, tasks=tasks)
+```
+
+`InvalidWorkflowError` should always wrap the original exception (`from exc`)
+so the traceback is preserved for debugging, while the caller only has to
+catch one error type.
+
+### Step 2: Avoid Regex — Use AST or Parsing Libraries
+
+Do not write custom regular expressions or manual brace-counters. They are
+fragile against string interpolation, nested quotes, and comments. Use a
+structured library instead:
+
+- **Nextflow/Groovy** → `groovy-parser` (Lark-based)
+- **Snakemake/Python** → Python's native `ast` module, or the official
+  Snakemake API
+- **Other languages** → a verified Lark grammar or Tree-sitter binding
+
+### Step 3: Register the Parser
+
+Add the import and registration call in `src/workflow_clinic/parsers/__init__.py`:
+
+```python
+from workflow_clinic.parsers.registry import ParserRegistry
+from workflow_clinic.parsers.nextflow import NextflowParser
+from workflow_clinic.parsers.snakemake import SnakemakeParser
+
+ParserRegistry.register("nextflow", NextflowParser)
+ParserRegistry.register("snakemake", SnakemakeParser)
+```
+
+### Step 4: Map Objects to the Common Schema
+
+Map your workflow's processes/rules onto the shared models:
+
+- **`Task`** — a process block or execution step.
+- **`TaskResources`** — resource requests: `cpus` (int), `memory` (str),
+  `container` (str).
+
+### Step 5: Write Unit and Integration Tests
+
+Add tests under `tests/` (e.g. `tests/test_snakemake_parser.py`) covering:
+
+- **Detection** — `can_parse()` is correct for valid files, unrelated
+  files, and directories.
+- **Translation** — task names and directives map to the expected
+  resource values.
+- **Syntax errors** — invalid input raises `InvalidWorkflowError`, not a
+  raw parser exception.
+
+Run the suite with:
+
+```bash
+pytest tests/test_snakemake_parser.py -v
+```
+
+---
+
+## 5. Common Pitfalls
+
+- **Forgetting to register the parser** in
+  `src/workflow_clinic/parsers/__init__.py` — `can_parse()` working in
+  isolation doesn't mean the registry will find it.
+- **Circular imports** — don't import `ParserRegistry` from inside your
+  parser module; register from `__init__.py` instead.
+- **Swallowing the original exception** — always use
+  `raise InvalidWorkflowError(...) from exc`, never a bare
+  `raise InvalidWorkflowError(...)`, or you lose the traceback.
+- **Only testing the happy path** — every new parser needs at least one
+  test that feeds it deliberately broken input and asserts
+  `InvalidWorkflowError` is raised.
+
+---
+
+## 6. Related Files
+
+| File | Purpose |
+|------|---------|
+| `tests/fixtures/dummy.nf` | Realistic DSL2 test fixture |
+| `src/workflow_clinic/parsers/nextflow.py` | Nextflow parser (reference implementation) |
+| `src/workflow_clinic/parsers/base.py` | `BaseParser` abstract interface |
+| `src/workflow_clinic/parsers/registry.py` | `ParserRegistry` routing logic |
+| `src/workflow_clinic/exceptions.py` | Exception hierarchy |
+| `tests/test_nextflow_parser.py` | Nextflow parser test suite |

@@ -51,7 +51,13 @@ class NextflowParser(BaseParser):
         raise ParserError(msg)
 
     def _find_leaf_value(self, node: Any, leaf_types: list[str]) -> str | None:
-        """Recursively search for a leaf node of specified types and return its value."""
+        """Recursively search for a leaf node of specified types and return its value.
+
+        NOTE: This performs a depth-first search and returns the FIRST matching
+        leaf. It does not evaluate expressions. For closure-based directives
+        like ``memory { 4.GB * task.attempt }``, this returns only the first
+        numeric literal (``"4"``), ignoring unit suffixes and arithmetic.
+        """
         if not isinstance(node, dict):
             return None
         if "leaf" in node and node["leaf"] in leaf_types:
