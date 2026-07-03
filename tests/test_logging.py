@@ -46,7 +46,7 @@ def _strip_ansi(text: str) -> str:
 def test_cli_help_on_no_args() -> None:
     """Verify that the CLI shows help when invoked with no arguments."""
     result = runner.invoke(app, [])
-    assert result.exit_code == 2  # noqa: PLR2004
+    assert result.exit_code == 2
     clean_output = _strip_ansi(result.output)
     assert "Usage: workflow-clinic" in clean_output
     assert "--help" in clean_output

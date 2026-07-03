@@ -111,20 +111,20 @@ def test_parsing_valid_file(tmp_path: Path) -> None:
     assert bundle.metadata.name == "my_workflow"
 
     # Verify tasks list
-    assert len(bundle.tasks) == 2  # noqa: PLR2004
+    assert len(bundle.tasks) == 2
 
     # Verify FASTQC task details
     fastqc = next(t for t in bundle.tasks if t.name == "FASTQC")
     assert fastqc.id == "FASTQC"
     assert fastqc.resources.container == "biocontainers/fastqc:v0.11.9"
-    assert fastqc.resources.cpus == 2  # noqa: PLR2004
+    assert fastqc.resources.cpus == 2
     assert fastqc.resources.memory == "8 GB"
 
     # Verify MULTIQC task details (testing equals-sign formatting support)
     multiqc = next(t for t in bundle.tasks if t.name == "MULTIQC")
     assert multiqc.id == "MULTIQC"
     assert multiqc.resources.container == "biocontainers/multiqc:v1.11"
-    assert multiqc.resources.cpus == 4  # noqa: PLR2004
+    assert multiqc.resources.cpus == 4
     assert multiqc.resources.memory == "16.GB"
 
 
@@ -142,14 +142,14 @@ def test_parsing_directory(tmp_path: Path) -> None:
     # Test parsing without specifying entrypoint (defaults to main.nf)
     bundle = parser.parse(workflow_dir)
     assert bundle.metadata.name == "main"
-    assert len(bundle.tasks) == 2  # noqa: PLR2004
+    assert len(bundle.tasks) == 2
 
     # Test parsing specifying custom entrypoint file name
     custom_file = workflow_dir / "custom.nf"
     custom_file.write_text(VALID_NF_CONTENT)
     bundle_custom = parser.parse(workflow_dir, entrypoint="custom.nf")
     assert bundle_custom.metadata.name == "custom"
-    assert len(bundle_custom.tasks) == 2  # noqa: PLR2004
+    assert len(bundle_custom.tasks) == 2
 
 
 def test_error_handling_scenarios(tmp_path: Path) -> None:
@@ -197,7 +197,7 @@ def test_bash_braces_in_script(tmp_path: Path) -> None:
     align = bundle.tasks[0]
     assert align.name == "ALIGN"
     assert align.resources.container == "biocontainers/bwa:v0.7.17"
-    assert align.resources.cpus == 4  # noqa: PLR2004
+    assert align.resources.cpus == 4
     assert align.resources.memory == "16 GB"
 
 
@@ -237,7 +237,7 @@ def test_parse_simple_nf_file(tmp_path: Path) -> None:
     task = bundle.tasks[0]
     assert task.name == "BWA_ALIGN"
     assert task.resources.container == "nf-core/bwa:0.7.17"
-    assert task.resources.cpus == 8  # noqa: PLR2004
+    assert task.resources.cpus == 8
     assert task.resources.memory == "32 GB"
 
 
@@ -248,7 +248,7 @@ def test_parse_dummy_nf_fixture() -> None:
     bundle = parser.parse(fixture_path)
 
     assert bundle.metadata.name == "dummy"
-    assert len(bundle.tasks) == 3  # noqa: PLR2004
+    assert len(bundle.tasks) == 3
 
     # Check that processes are parsed and resource limits exist
     processes = {t.name for t in bundle.tasks}
@@ -258,5 +258,5 @@ def test_parse_dummy_nf_fixture() -> None:
     assert (
         fastqc.resources.container == "quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
     )
-    assert fastqc.resources.cpus == 2  # noqa: PLR2004
+    assert fastqc.resources.cpus == 2
     assert fastqc.resources.memory == "4"  # Evaluates closure to first numeric literal

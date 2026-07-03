@@ -26,6 +26,7 @@ dependencies = [
     "typer[all]>=0.12",
     "pydantic>=2.0",
     "groovy-parser>=0.2.2",
+    "rich",
 ]
 
 [project.optional-dependencies]
@@ -73,7 +74,7 @@ ignore = [
 known-first-party = ["workflow_clinic"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]  # asserts are standard in pytest
+"tests/**" = ["S101", "PLR2004", "SLF001"]  # asserts, magic values, and private member checks are standard in tests
 
 # --- Mypy (Type Checker) ---
 [tool.mypy]

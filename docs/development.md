@@ -10,7 +10,8 @@ new workflow language (e.g. Snakemake, CWL, WDL).
 2. [Using Parsers in Python (Library Imports)](#2-using-parsers-in-python-library-imports)
 3. [How to Write a New Parser Class](#3-how-to-write-a-new-parser-class)
 4. [Common Pitfalls](#4-common-pitfalls)
-5. [Related Files](#5-related-files)
+5. [How to Write a New Rule](#5-how-to-write-a-new-rule)
+6. [Related Files](#6-related-files)
 
 ---
 
@@ -102,26 +103,16 @@ Task: ALIGN
 > the first numeric literal it finds (`4`), ignoring unit suffixes (`.GB`)
 > and arithmetic (`* task.attempt`). This means `memory { 4.GB * task.attempt }`
 > and `memory { 4.GB * task.attempt * 2 }` both produce `Memory: 4`.
-> Plain-string directives like `memory "8 GB"` are extracted verbatim and
-> retain their units. Full closure evaluation is a planned improvement.
+> Plain-string directives like `memory "8 GB"` are extracted verbatim and retain their units.
 
 ### Why `dummy.nf` looks the way it does
 
-`tests/fixtures/dummy.nf` is modeled on real **nf-core** DSL2 pipelines rather
-than a hand-simplified example, so it exercises the same edge cases a real
-workflow would:
+`tests/fixtures/dummy.nf` is modeled on real **nf-core** DSL2 pipelines rather than a hand-simplified example, so it exercises the same edge cases a real workflow would:
 
-- **Diverse directive formats** — `cpus`, plain-string memory (`"8 GB"`),
-  and closure-based `memory { 4.GB * task.attempt }`.
-- **Named outputs** — `emit:` syntax, common in nf-core modules and a
-  frequent source of AST-walker bugs.
-- **Realistic interpolation** — `"${params.outdir}/trimmed"`, `baseDir`
-  references, instead of hardcoded literals.
-- **Compliance baseline** — every process has a `container`, `tag`, `cpus`, and
-  `memory`, so this fixture should produce zero findings when run through
-  the Rule Engine. (A second fixture with intentional gaps — missing
-  container, hardcoded path — is planned for the Rule Engine PR to test the
-  opposite case.)
+- **Diverse directive formats** — `cpus`, plain-string memory (`"8 GB"`), and closure-based `memory { 4.GB * task.attempt }`.
+- **Named outputs** — `emit:` syntax, common in nf-core modules and a frequent source of AST-walker bugs.
+- **Realistic interpolation** — `"${params.outdir}/trimmed"`, `baseDir` references, instead of hardcoded literals.
+- **Compliance baseline** — every process has a `container`, `tag`, `cpus`, and `memory`, so this fixture should produce zero findings when run through the Rule Engine. (A second fixture `tests/fixtures/poor_practices.nf` contains intentional gaps to verify rule violations.)
 
 ---
 
@@ -233,15 +224,81 @@ pytest tests/test_my_language_parser.py -v
   test that feeds it deliberately broken input and asserts
   `InvalidWorkflowError` is raised.
 
+## 5. How to Write a New Rule
+
+To add a new validation check or portability rule:
+
+### Step 1: Create the Rule Module
+
+Create a new file under `src/workflow_clinic/rules/`, e.g. `src/workflow_clinic/rules/custom.py`, inheriting from the `BaseRule` class defined in `src/workflow_clinic/rules/base.py`.
+
+#### Define Rule Attributes
+Every rule must define `id`, `name`, and `description` attributes:
+
+```python
+from workflow_clinic.rules.base import BaseRule
+
+class MyCustomRule(BaseRule):
+    """Flag workflows violating custom conditions (W003)."""
+
+    id = "W003"
+    name = "My Custom Rule"
+    description = "Checks for custom workflow validation patterns."
+```
+
+#### Implement the `check` method
+Implement `check(self, bundle: WorkflowBundle) -> list[Finding]`. Return a list of `Finding` objects (with correct `Severity` level) if violations are detected:
+
+```python
+from workflow_clinic.models import WorkflowBundle
+from workflow_clinic.rules.base import BaseRule, Finding, Severity
+
+    def check(self, bundle: WorkflowBundle) -> list[Finding]:
+        findings = []
+        # Check specific validation conditions
+        if not bundle.metadata.name:
+            findings.append(
+                Finding(
+                    rule_id=self.id,
+                    message="Workflow metadata is missing a name.",
+                    severity=Severity.WARNING,
+                )
+            )
+        return findings
+```
+
+### Step 2: Register the Rule
+
+Import and register the rule in `src/workflow_clinic/rules/__init__.py`:
+
+```python
+from workflow_clinic.rules.custom import MyCustomRule
+
+# Register your custom rule
+RuleRegistry.register(MyCustomRule)
+```
+
+### Step 3: Write Automated Tests
+
+Add tests to `tests/test_rules.py` covering your rule class:
+- Instantiate your rule and verify `check()` returns findings on flawed inputs and an empty list on compliant inputs.
+- Run the tests with `pytest tests/test_rules.py -v`.
+
 ---
 
-## 5. Related Files
+## 6. Related Files
 
 | File | Purpose |
 |------|---------|
 | `tests/fixtures/dummy.nf` | Realistic DSL2 test fixture |
-| `src/workflow_clinic/parsers/nextflow.py` | Nextflow parser (reference implementation) |
-| `src/workflow_clinic/parsers/base.py` | `BaseParser` abstract interface |
-| `src/workflow_clinic/parsers/registry.py` | `ParserRegistry` routing logic |
+| `tests/fixtures/poor_practices.nf` | Flawed DSL2 test fixture demonstrating violations |
+| `src/workflow_clinic/parsers/nextflow.py` | Nextflow parser implementation |
+| `src/workflow_clinic/rules/base.py` | `BaseRule` interface, `Finding` model, and `Severity` enum |
+| `src/workflow_clinic/rules/registry.py` | `RuleRegistry` lookup mechanics |
+| `src/workflow_clinic/rules/runner.py` | `RuleRunner` logic |
+| `src/workflow_clinic/rules/container.py` | `PinnedContainerRule` implementation |
+| `src/workflow_clinic/rules/resources.py` | `ResourceLimitsRule` implementation |
 | `src/workflow_clinic/exceptions.py` | Exception hierarchy |
-| `tests/test_nextflow_parser.py` | Nextflow parser test suite |
+| `tests/test_rules.py` | Rule engine validation tests |
+| `tests/test_cli.py` | Command-line interface and diagnostics checks |
+
