@@ -8,10 +8,9 @@ new workflow language (e.g. Snakemake, CWL, WDL).
 
 1. [Overview of Parsing Architecture](#1-overview-of-parsing-architecture)
 2. [Using Parsers in Python (Library Imports)](#2-using-parsers-in-python-library-imports)
-3. [Parsing Workflows via CLI](#3-parsing-workflows-via-cli)
-4. [How to Write a New Parser Class](#4-how-to-write-a-new-parser-class)
-5. [Common Pitfalls](#5-common-pitfalls)
-6. [Related Files](#6-related-files)
+3. [How to Write a New Parser Class](#3-how-to-write-a-new-parser-class)
+4. [Common Pitfalls](#4-common-pitfalls)
+5. [Related Files](#5-related-files)
 
 ---
 
@@ -35,7 +34,7 @@ WorkflowBundle (Tasks + Resources + Metadata)
 
 ### The `BaseParser` contract
 
-Every parser must implement the `BaseParser` abstract class defined in [base.py](file:///Users/revaa/Desktop/Workflow%20Clinic%20GSOC/ga4gh_workflow_clinic_gsoc_2026-/src/workflow_clinic/parsers/base.py).
+Every parser must implement the `BaseParser` abstract class defined in `src/workflow_clinic/parsers/base.py`.
 
 It requires implementing:
 - `can_parse(cls, path: Path) -> bool` — returns `True` if the parser is compatible with the path.
@@ -220,7 +219,7 @@ pytest tests/test_my_language_parser.py -v
 
 ---
 
-## 5. Common Pitfalls
+## 4. Common Pitfalls
 
 - **Forgetting to register the parser** in
   `src/workflow_clinic/parsers/__init__.py` — `can_parse()` working in
@@ -236,7 +235,7 @@ pytest tests/test_my_language_parser.py -v
 
 ---
 
-## 6. Related Files
+## 5. Related Files
 
 | File | Purpose |
 |------|---------|
