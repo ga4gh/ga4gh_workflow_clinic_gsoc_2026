@@ -35,27 +35,11 @@ WorkflowBundle (Tasks + Resources + Metadata)
 
 ### The `BaseParser` contract
 
-Every parser must implement this interface (`src/workflow_clinic/parsers/base.py`):
+Every parser must implement the `BaseParser` abstract class defined in [base.py](file:///Users/revaa/Desktop/Workflow%20Clinic%20GSOC/ga4gh_workflow_clinic_gsoc_2026-/src/workflow_clinic/parsers/base.py).
 
-```python
-from abc import ABC, abstractmethod
-from pathlib import Path
-from workflow_clinic.models import WorkflowBundle
-
-class BaseParser(ABC):
-    @classmethod
-    @abstractmethod
-    def can_parse(cls, path: Path) -> bool:
-        """Return True if this parser can handle the given file/directory."""
-
-    @abstractmethod
-    def parse(self, path: Path, entrypoint: str | None = None) -> WorkflowBundle:
-        """Parse the workflow and return a WorkflowBundle.
-
-        Must raise InvalidWorkflowError (not the raw underlying exception)
-        on any syntax or structural error.
-        """
-```
+It requires implementing:
+- `can_parse(cls, path: Path) -> bool` — returns `True` if the parser is compatible with the path.
+- `parse(self, path: Path, entrypoint: str | None = None) -> WorkflowBundle` — parses the path and returns a `WorkflowBundle`, wrapping any syntax/structural parser exceptions in `InvalidWorkflowError`.
 
 ---
 
@@ -142,64 +126,51 @@ workflow would:
 
 ---
 
-## 3. Parsing Workflows via CLI
+## 3. How to Write a New Parser Class
 
-> **Planned for Phase 3** — not yet implemented.
-> We do not expose a low-level `parse` subcommand to end-users. Parsing is
-> invoked internally by higher-level commands such as `diagnose`/`check`,
-> which are not yet part of this PR.
-
-```bash
-# Not yet available — shown for reference
-workflow-clinic diagnose tests/fixtures/dummy.nf
-```
-
-Once implemented, the command handler will: resolve the workspace path →
-`ParserRegistry.detect_parser(path)` → `parser.parse(path)` → pass the
-resulting `WorkflowBundle` into the Rule Engine runner.
-
----
-
-## 4. How to Write a New Parser Class
-
-To add support for a new workflow language (Snakemake, CWL, WDL, ...):
+To add support for a new workflow language (e.g. `MyLanguage`):
 
 ### Step 1: Create the Parser Module
 
-Create a new file under `src/workflow_clinic/parsers/`, e.g.
-`src/workflow_clinic/parsers/snakemake.py`, inheriting from `BaseParser`:
+Create a new file under `src/workflow_clinic/parsers/`, e.g. `src/workflow_clinic/parsers/my_language.py`, inheriting from `BaseParser`.
+
+#### Implement `can_parse`
+Define `can_parse` to detect files using extensions or names:
 
 ```python
 from pathlib import Path
 from workflow_clinic.parsers.base import BaseParser
-from workflow_clinic.exceptions import InvalidWorkflowError
-from workflow_clinic.models import WorkflowBundle, WorkflowMetadata
 
-class SnakemakeParser(BaseParser):
-    """Parser implementation for Snakemake workflows."""
+class MyLanguageParser(BaseParser):
+    """Parser implementation for MyLanguage workflows."""
 
     @classmethod
     def can_parse(cls, path: Path) -> bool:
         if path.is_file():
-            return path.name == "Snakefile" or path.suffix == ".smk"
+            return path.suffix == ".mylang"
         return False
+```
+
+#### Implement `parse`
+Define `parse` to extract `WorkflowMetadata` and `Task` resources, wrapping any parser errors inside `InvalidWorkflowError`:
+
+```python
+from pathlib import Path
+from workflow_clinic.exceptions import InvalidWorkflowError
+from workflow_clinic.models import WorkflowBundle, WorkflowMetadata
 
     def parse(self, path: Path, entrypoint: str | None = None) -> WorkflowBundle:
         try:
-            # Custom parsing logic here...
+            # Custom parsing/AST traversal logic here...
             metadata = WorkflowMetadata(name=path.stem)
-            tasks = []  # Populate with Task structures
+            tasks = []  # Populate with Task objects
         except Exception as exc:
-            raise InvalidWorkflowError(
-                f"Failed to parse {path}: {exc}"
-            ) from exc
+            raise InvalidWorkflowError(f"Failed to parse {path}: {exc}") from exc
 
         return WorkflowBundle(metadata=metadata, tasks=tasks)
 ```
 
-`InvalidWorkflowError` should always wrap the original exception (`from exc`)
-so the traceback is preserved for debugging, while the caller only has to
-catch one error type.
+`InvalidWorkflowError` must always wrap the original exception (`from exc`) so the traceback is preserved for debugging.
 
 ### Step 2: Avoid Regex — Use AST or Parsing Libraries
 
@@ -219,10 +190,10 @@ Add the import and registration call in `src/workflow_clinic/parsers/__init__.py
 ```python
 from workflow_clinic.parsers.registry import ParserRegistry
 from workflow_clinic.parsers.nextflow import NextflowParser
-from workflow_clinic.parsers.snakemake import SnakemakeParser
+from workflow_clinic.parsers.my_language import MyLanguageParser
 
 ParserRegistry.register("nextflow", NextflowParser)
-ParserRegistry.register("snakemake", SnakemakeParser)
+ParserRegistry.register("mylanguage", MyLanguageParser)
 ```
 
 ### Step 4: Map Objects to the Common Schema
@@ -235,19 +206,16 @@ Map your workflow's processes/rules onto the shared models:
 
 ### Step 5: Write Unit and Integration Tests
 
-Add tests under `tests/` (e.g. `tests/test_snakemake_parser.py`) covering:
+Add tests under `tests/` (e.g. `tests/test_my_language_parser.py`) covering:
 
-- **Detection** — `can_parse()` is correct for valid files, unrelated
-  files, and directories.
-- **Translation** — task names and directives map to the expected
-  resource values.
-- **Syntax errors** — invalid input raises `InvalidWorkflowError`, not a
-  raw parser exception.
+- **Detection** — `can_parse()` is correct for valid files, unrelated files, and directories.
+- **Translation** — task names and directives map to the expected resource values.
+- **Syntax errors** — invalid input raises `InvalidWorkflowError`, not a raw parser exception.
 
 Run the suite with:
 
 ```bash
-pytest tests/test_snakemake_parser.py -v
+pytest tests/test_my_language_parser.py -v
 ```
 
 ---

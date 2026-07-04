@@ -22,15 +22,6 @@ class TaskResources(BaseModel):
         cpus: Number of CPU cores requested/allocated, or None if unspecified.
         memory: Memory constraint string (e.g., "8 GB"), or None if unspecified.
         container: Name or URI of the container image used for execution, or None.
-
-    .. warning::
-        The ``memory`` field may contain **unresolved values** when the source
-        workflow uses closure-based directives (e.g. Nextflow's
-        ``memory { 4.GB * task.attempt }``). In such cases, the parser extracts
-        only the first numeric literal (``"4"``), not the evaluated result.
-        Rule Engine consumers that compare memory thresholds should treat
-        bare-numeric memory values as potentially unreliable.
-        See: https://github.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026/issues/TBD
     """
 
     cpus: int | None = Field(default=None, gt=0)

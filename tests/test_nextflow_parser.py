@@ -239,3 +239,24 @@ def test_parse_simple_nf_file(tmp_path: Path) -> None:
     assert task.resources.container == "nf-core/bwa:0.7.17"
     assert task.resources.cpus == 8  # noqa: PLR2004
     assert task.resources.memory == "32 GB"
+
+
+def test_parse_dummy_nf_fixture() -> None:
+    """Verify that NextflowParser correctly parses the real-world dummy.nf fixture."""
+    fixture_path = Path(__file__).parent / "fixtures" / "dummy.nf"
+    parser = NextflowParser()
+    bundle = parser.parse(fixture_path)
+
+    assert bundle.metadata.name == "dummy"
+    assert len(bundle.tasks) == 3  # noqa: PLR2004
+
+    # Check that processes are parsed and resource limits exist
+    processes = {t.name for t in bundle.tasks}
+    assert processes == {"FASTQC", "TRIM_READS", "ALIGN"}
+
+    fastqc = next(t for t in bundle.tasks if t.name == "FASTQC")
+    assert (
+        fastqc.resources.container == "quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
+    )
+    assert fastqc.resources.cpus == 2  # noqa: PLR2004
+    assert fastqc.resources.memory == "4"  # Evaluates closure to first numeric literal

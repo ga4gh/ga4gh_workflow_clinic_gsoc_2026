@@ -39,6 +39,9 @@ class NextflowParser(BaseParser):
     def _resolve_script_file(self, path: Path, entrypoint: str | None) -> Path:
         """Resolve the script file path from the given directory/file path."""
         if path.is_file():
+            if path.suffix != ".nf":
+                msg = f"Unsupported Nextflow file extension: {path}"
+                raise ParserError(msg)
             return path
         if path.is_dir():
             target_entrypoint = entrypoint or "main.nf"
