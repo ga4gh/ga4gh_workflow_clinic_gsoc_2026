@@ -249,7 +249,7 @@ def test_rules_end_to_end_with_fixtures() -> None:
     findings_dummy = runner.run(bundle_dummy)
     assert len(findings_dummy) == 0
 
-    # Negative control: poor_practices.nf has exactly 7 findings
+    # Negative control: poor_practices.nf has exactly 6 findings
     p_poor = Path(__file__).parent / "fixtures" / "poor_practices.nf"
     parser_poor = ParserRegistry.get_parser(ParserRegistry.detect_parser(p_poor))
     bundle_poor = parser_poor.parse(p_poor)

@@ -82,8 +82,8 @@ def test_diagnose_unsupported_workflow() -> None:
     unsupported_path = str(Path(__file__).parent / "test_cli.py")
     result = runner.invoke(app, ["diagnose", unsupported_path])
     assert result.exit_code == 1
-    assert "Error:" in result.output
-    assert "No registered parser can handle workflow" in result.output
+    assert "Error:" in result.stderr
+    assert "No registered parser can handle workflow" in result.stderr
 
 
 def test_diagnose_nonexistent_file() -> None:
