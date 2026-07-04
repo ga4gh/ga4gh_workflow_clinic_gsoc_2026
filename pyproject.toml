@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "typer[all]>=0.12",
     "pydantic>=2.0",
+    "groovy-parser>=0.2.2",
 ]
 
 [project.optional-dependencies]

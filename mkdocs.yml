@@ -67,4 +67,5 @@ plugins:
 nav:
   - Home: index.md
   - Architecture: architecture/architecture.md
+  - Development Guide: development.md
   - API Reference: api.md
