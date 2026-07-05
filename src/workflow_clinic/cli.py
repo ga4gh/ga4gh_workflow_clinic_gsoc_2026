@@ -6,11 +6,23 @@ and CLI command routing.
 
 import logging
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich.console import Console
+from rich.table import Table
 
 from workflow_clinic import __version__
+from workflow_clinic.exceptions import (
+    InvalidWorkflowError,
+    ParserError,
+    UnsupportedWorkflowError,
+)
+from workflow_clinic.parsers import ParserRegistry
+from workflow_clinic.rules import RuleRunner, Severity
+
+logger = logging.getLogger(__name__)
 
 # Create the Typer application instance
 app = typer.Typer(
@@ -18,6 +30,9 @@ app = typer.Typer(
     help="AI-Powered Cloudification of Bioinformatics Workflows",
     no_args_is_help=True,
 )
+
+console = Console()
+err_console = Console(stderr=True)
 
 
 def setup_logging(*, verbose: bool) -> None:
@@ -66,3 +81,94 @@ def main(
     """Run the main command-line interface for Workflow Clinic."""
     _ = version
     setup_logging(verbose=verbose)
+
+
+_SEVERITY_COLORS: dict[Severity, str] = {
+    Severity.INFO: "blue",
+    Severity.WARNING: "yellow",
+    Severity.ERROR: "red",
+}
+
+
+@app.command()
+def diagnose(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=True,
+            readable=True,
+            resolve_path=True,
+            help="Path to the workflow file or directory to diagnose.",
+        ),
+    ],
+) -> None:
+    """Diagnose a workflow for portability and cloud-readiness issues."""
+    # 1. Detect parser
+    try:
+        parser_name = ParserRegistry.detect_parser(path)
+    except UnsupportedWorkflowError as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    logger.info("Detected parser: %s", parser_name)
+    parser = ParserRegistry.get_parser(parser_name)
+
+    # 2. Parse workflow
+    try:
+        bundle = parser.parse(path)
+    except (InvalidWorkflowError, ParserError) as e:
+        err_console.print(f"[red]Parse error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    logger.info(
+        "Parsed workflow '%s' with %d task(s)",
+        bundle.metadata.name,
+        len(bundle.tasks),
+    )
+
+    # 3. Run rules
+    runner = RuleRunner()
+    findings = runner.run(bundle)
+
+    # 4. Display results
+    if not findings:
+        console.print(
+            "\n[bold green]✓[/bold green] No issues found — "
+            "workflow is clean and cloud-ready!\n"
+        )
+        raise typer.Exit(code=0)
+
+    table = Table(
+        title=f"Diagnostic Findings for '{bundle.metadata.name}'",
+        show_lines=True,
+    )
+    table.add_column("Severity", style="bold", width=10)
+    table.add_column("Rule", width=20)
+    table.add_column("Process", width=18)
+    table.add_column("Message")
+
+    for finding in findings:
+        color = _SEVERITY_COLORS.get(finding.severity, "white")
+        table.add_row(
+            f"[{color}]{finding.severity.value.upper()}[/{color}]",
+            finding.rule_id,
+            finding.location or "—",
+            finding.message,
+        )
+
+    console.print()
+    console.print(table)
+
+    # Summary line
+    n_err = sum(1 for f in findings if f.severity == Severity.ERROR)
+    n_warn = sum(1 for f in findings if f.severity == Severity.WARNING)
+    n_info = sum(1 for f in findings if f.severity == Severity.INFO)
+    console.print(
+        f"\n[bold]Summary:[/bold] {n_err} error(s), "
+        f"{n_warn} warning(s), {n_info} info(s)\n"
+    )
+
+    exit_code = 1 if n_err > 0 else 0
+    raise typer.Exit(code=exit_code)
