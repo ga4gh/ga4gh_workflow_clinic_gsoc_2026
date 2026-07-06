@@ -286,7 +286,63 @@ Add tests to `tests/test_rules.py` covering your rule class:
 
 ---
 
-## 6. Related Files
+## 6. How the RAG Retriever and Knowledge Base Work
+
+To provide context-aware suggestions and GA4GH standards alignment context, Workflow Clinic utilizes a local vector database powered by ChromaDB.
+
+### Adding Knowledge Base (KB) Files
+
+All knowledge base documents are stored as standard Markdown files under `src/workflow_clinic/kb/`. 
+
+To write or extend KB files, split them into sections using HTML comment markers. Each marker specifies which rule IDs that section is relevant to:
+
+```markdown
+<!-- rule: W001 -->
+## Section Heading
+Content specific to pinned containers (Rule W001)...
+
+<!-- rule: global -->
+## General standards alignment
+Content applicable to all diagnostics (WES, TRS details)...
+
+<!-- rule: W001, W002 -->
+## Combined Rule Section
+Content applicable to both container and resource checks...
+```
+
+*   **Multi-rule mapping:** When a section is tagged with multiple rule IDs (comma-separated), the indexer duplicates the section under each tag.
+*   **Global tag:** Chunks marked `global` are always eligible for retrieval regardless of the queried `finding_id`.
+
+### The RAG Retriever API
+
+The database client and indexing logic are packaged inside `src/workflow_clinic/advisor/retriever.py`:
+
+```python
+from workflow_clinic.advisor import RAGRetriever
+
+# 1. Initialize retriever (persists local db to ~/.workflow_clinic/chromadb/)
+retriever = RAGRetriever()
+
+# 2. Query for relevant context matching a specific finding ID
+results = retriever.retrieve(
+    finding_id="W001",
+    query="Quay.io biocontainers format",
+    n_results=3  # Standard amount of context to retrieve
+)
+```
+
+### Development & Index Reset
+
+The retriever persists index embeddings to disk under the user's home folder. 
+*   **Stale Indices:** If you update or create a Markdown file in `src/workflow_clinic/kb/` during development, your local index will not automatically refresh since it skips indexing when the DB count is greater than zero.
+*   **How to reset:** Delete the local database folder to force a re-index:
+    ```bash
+    rm -rf ~/.workflow_clinic/chromadb/
+    ```
+
+---
+
+## 7. Related Files
 
 | File | Purpose |
 |------|---------|
@@ -298,7 +354,9 @@ Add tests to `tests/test_rules.py` covering your rule class:
 | `src/workflow_clinic/rules/runner.py` | `RuleRunner` logic |
 | `src/workflow_clinic/rules/container.py` | `PinnedContainerRule` implementation |
 | `src/workflow_clinic/rules/resources.py` | `ResourceLimitsRule` implementation |
+| `src/workflow_clinic/advisor/retriever.py` | `RAGRetriever` database search logic |
 | `src/workflow_clinic/exceptions.py` | Exception hierarchy |
 | `tests/test_rules.py` | Rule engine validation tests |
+| `tests/test_rag.py` | RAG retriever and ChromaDB tests |
 | `tests/test_cli.py` | Command-line interface and diagnostics checks |
 
