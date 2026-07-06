@@ -56,7 +56,7 @@ Changelog = "https://github.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026/releases"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"workflow_clinic.kb" = ["*.md"]
+"workflow_clinic" = ["kb/*.md"]
 
 # --- Ruff (Linter + Formatter) ---
 [tool.ruff]

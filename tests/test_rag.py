@@ -58,6 +58,20 @@ def test_markdown_chunking(temp_kb_dir: Path) -> None:
     assert "This contains general bio-workflows context." in chunks[2]["content"]
 
 
+def test_markdown_chunking_includes_leading_text_as_global(
+    temp_kb_dir: Path,
+) -> None:
+    """Verify leading text before the first rule marker is included (as global)."""
+    leading_file = temp_kb_dir / "leading.md"
+    leading_file.write_text(
+        "# Intro\n\nSome intro text.\n\n<!-- rule: W001 -->\n## Section\nBody.\n",
+        encoding="utf-8",
+    )
+    chunks = chunk_markdown_file(leading_file)
+    assert chunks[0]["rules"] == ["global"]
+    assert "Some intro text." in chunks[0]["content"]
+
+
 def test_retriever_indexing_runs_once(tmp_path: Path, temp_kb_dir: Path) -> None:
     """Verify retriever only indexes files when the database collection is empty."""
     persist_path = tmp_path / "chroma_db"

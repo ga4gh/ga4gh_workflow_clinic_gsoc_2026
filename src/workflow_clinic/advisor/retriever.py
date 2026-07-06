@@ -21,9 +21,13 @@ def chunk_markdown_file(file_path: Path) -> list[dict]:
     text = file_path.read_text(encoding="utf-8")
     parts = RULE_MARKER_PATTERN.split(text)
 
-    # If no markers were matched, or the file starts with text before any markers
-    # parts[0] is the leading text. We ignore it if it is empty/whitespace.
+    # parts[0] is any text before the first marker. Treat it as a global chunk
+    # so introductory content is preserved and retrievable.
     chunks = []
+    leading_text = parts[0].strip()
+    if leading_text:
+        chunks.append({"rules": ["global"], "content": leading_text, "index": 0})
+
     num_markers = len(parts) // 2
 
     for i in range(num_markers):
