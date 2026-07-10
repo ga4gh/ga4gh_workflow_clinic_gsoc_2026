@@ -318,19 +318,19 @@ The Tool Registry Service API...
 
 ### The Knowledge Store API
 
-The lookup logic is packaged inside `src/workflow_clinic/advisor/retriever.py` via the `RAGRetriever` class (maintained for backward compatibility with the GSoC proposal and architecture CLI design, but operating as a deterministic static lookup store rather than a vector-based search engine):
+The lookup logic is packaged inside `src/workflow_clinic/advisor/retriever.py` via the `RuleKnowledgeStore` class:
 
 ```python
-from workflow_clinic.advisor import RAGRetriever
+from workflow_clinic.advisor import RuleKnowledgeStore
 
-# 1. Initialize the retriever (loads the embedded TOML file)
-retriever = RAGRetriever()
+# 1. Initialize the store (loads the embedded TOML file)
+store = RuleKnowledgeStore()
 
 # 2. Query for relevant guidelines matching a specific finding ID
-results = retriever.retrieve(finding_id="W001")
+results = store.retrieve(finding_id="W001")
 ```
 
-Unlike database-backed retrievers, updates to the TOML file are immediate and require no manual index refreshes or database deletions.
+Updates to the TOML file are immediate and require no manual refreshes.
 
 ---
 
@@ -346,7 +346,7 @@ Unlike database-backed retrievers, updates to the TOML file are immediate and re
 | `src/workflow_clinic/rules/runner.py` | `RuleRunner` logic |
 | `src/workflow_clinic/rules/container.py` | `PinnedContainerRule` implementation |
 | `src/workflow_clinic/rules/resources.py` | `ResourceLimitsRule` implementation |
-| `src/workflow_clinic/advisor/retriever.py` | `RAGRetriever` knowledge base lookup store |
+| `src/workflow_clinic/advisor/retriever.py` | `RuleKnowledgeStore` lookup implementation |
 | `src/workflow_clinic/exceptions.py` | Exception hierarchy |
 | `tests/test_rules.py` | Rule engine validation tests |
 | `tests/test_knowledge_store.py` | Knowledge store retriever tests |

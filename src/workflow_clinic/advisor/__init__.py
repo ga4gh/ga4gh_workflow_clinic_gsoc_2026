@@ -1,5 +1,5 @@
 """AI Advisor and Critic modules for Workflow Clinic."""
 
-from workflow_clinic.advisor.retriever import RAGRetriever
+from workflow_clinic.advisor.retriever import RuleKnowledgeStore
 
-__all__ = ["RAGRetriever"]
+__all__ = ["RuleKnowledgeStore"]

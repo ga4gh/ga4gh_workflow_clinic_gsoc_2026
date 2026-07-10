@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from workflow_clinic.advisor.retriever import RAGRetriever
+from workflow_clinic.advisor.retriever import RuleKnowledgeStore
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ content = "Performance is important."
 
 def test_retriever_filtering_correctness(temp_kb_dir: Path) -> None:
     """Verify retrieve filters and returns relevant rule IDs without global context bloat."""
-    retriever = RAGRetriever(kb_dir=temp_kb_dir)
+    retriever = RuleKnowledgeStore(kb_dir=temp_kb_dir)
 
     # 1. Query W001: should return only W001 sections, and NEVER W002 or global sections
     results_w001 = retriever.retrieve(finding_id="W001")
@@ -71,7 +71,7 @@ def test_retriever_filtering_correctness(temp_kb_dir: Path) -> None:
 
 def test_retriever_unknown_finding_id(temp_kb_dir: Path) -> None:
     """Verify that querying an unknown rule ID falls back to returning global guidance."""
-    retriever = RAGRetriever(kb_dir=temp_kb_dir)
+    retriever = RuleKnowledgeStore(kb_dir=temp_kb_dir)
 
     results = retriever.retrieve(finding_id="W999")
     assert len(results) == 1  # falls back to only global section
@@ -87,7 +87,7 @@ def test_retriever_malformed_toml(tmp_path: Path) -> None:
     toml_file = kb_path / "rules_knowledge.toml"
     toml_file.write_text("invalid = [toml : syntax }", encoding="utf-8")
 
-    retriever = RAGRetriever(kb_dir=kb_path)
+    retriever = RuleKnowledgeStore(kb_dir=kb_path)
     assert retriever._rules_data == {}
 
     # Querying should yield empty results gracefully instead of crashing

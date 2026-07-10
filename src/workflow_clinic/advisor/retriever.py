@@ -13,11 +13,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-class RAGRetriever:
-    """Retriever that looks up workflow best practices and standards from a local TOML file.
-
-    Maintains the RAGRetriever name for backward compatibility with the GSoC proposal and CLI.
-    """
+class RuleKnowledgeStore:
+    """Store that looks up workflow best practices and standards from a local TOML file."""
 
     def __init__(self, kb_dir: Path | None = None) -> None:
         """Initialize the retriever and load the rule knowledge data from TOML."""
