@@ -330,7 +330,7 @@ store = RuleKnowledgeStore()
 results = store.retrieve(finding_id="W001")
 ```
 
-Updates to the TOML file are immediate and require no manual refreshes.
+Updates to the TOML file are picked up the next time a new `RuleKnowledgeStore` instance is created (the file is loaded at initialization).
 
 ---
 

@@ -67,16 +67,20 @@ class RuleKnowledgeStore:
         # 1. Fetch rule-specific sections if they exist in the rules data
         if finding_id in self._rules_data:
             rule_entry = self._rules_data[finding_id]
-            if isinstance(rule_entry, dict) and "sections" in rule_entry:
-                for section in rule_entry["sections"]:
+            if isinstance(rule_entry, dict):
+                for section in rule_entry.get("sections", []):
+                    if not isinstance(section, dict):
+                        continue
                     title = section.get("title", "")
                     content = section.get("content", "")
                     results.append(f"## {title}\n\n{content.strip()}")
         # 2. Otherwise fall back to global sections
         elif "global" in self._rules_data:
             global_entry = self._rules_data["global"]
-            if isinstance(global_entry, dict) and "sections" in global_entry:
-                for section in global_entry["sections"]:
+            if isinstance(global_entry, dict):
+                for section in global_entry.get("sections", []):
+                    if not isinstance(section, dict):
+                        continue
                     title = section.get("title", "")
                     content = section.get("content", "")
                     results.append(f"## {title}\n\n{content.strip()}")
