@@ -1,0 +1,159 @@
+[W001]
+title = "Pinned Container"
+
+[[W001.sections]]
+title = "Why Unpinned Containers Break Reproducibility"
+content = """
+A container reference without an explicit version — either a bare image name or an image tagged :latest — resolves to whatever the registry currently considers "latest" at pull time. Because that mapping can change whenever the upstream image is rebuilt, two runs of the same workflow, weeks apart, can silently execute different tool versions. This defeats the entire purpose of containerizing a pipeline: the point of a container is to fix the software environment, not just to fix that a container is used.
+
+Avoid:
+```groovy
+container 'ubuntu'          // no tag — resolves to :latest
+container 'ubuntu:latest'   // floating tag, not reproducible
+```
+
+Prefer:
+```groovy
+container 'quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0'
+```
+"""
+
+[[W001.sections]]
+title = "Pinning by Digest for Stronger Guarantees"
+content = """
+A tag is a mutable pointer — even a specific version tag could technically be re-pushed by a registry admin. A content digest (@sha256:...) instead references the exact bytes of an image, so it cannot silently change even if the tag is reused. For workflows where byte-for-byte reproducibility matters (e.g. results that will be published or audited), pinning by digest is stronger than pinning by tag alone:
+
+```groovy
+container 'quay.io/biocontainers/samtools@sha256:aabb7783a654d0085a6a68f000bb7ccba88d8b945d8b76712ef3c05af4021a8e'
+```
+
+A digest reference should always be treated as fully pinned, regardless of whether a human-readable tag is present alongside it.
+"""
+
+[W002]
+title = "Resource Limits"
+
+[[W002.sections]]
+title = "Why Resource Declarations Matter"
+content = """
+Nextflow's portability across executors depends on each process declaring what it needs, not on the executor guessing. When a process omits cpus or memory, a scheduler like AWS Batch or Google Cloud Batch has no basis to size the compute resource it launches — it will either fall back to an overly conservative default (slowing the pipeline down) or fail to schedule the task at all. Declaring resources explicitly is what allows the same pipeline definition to run efficiently on a laptop, an HPC cluster, and a cloud batch service.
+
+```groovy
+process ALIGN_READS {
+    cpus 8
+    memory '16 GB'
+
+    script:
+    \"\"\"
+    bwa mem -t ${task.cpus} reference.fa reads.fq > out.sam
+    \"\"\"
+}
+```
+"""
+
+[[W002.sections]]
+title = "Dynamic Resource Scaling"
+content = """
+Because Nextflow tracks every process execution and can resume from checkpoints, it's common practice to let resource requests grow on retry rather than hardcoding a single fixed value that might be too small for larger input files:
+
+```groovy
+memory { 8.GB * task.attempt }
+maxRetries 3
+errorStrategy 'retry'
+```
+
+This pattern only works if memory/cpus are declared as expressions in the first place — a hardcoded literal value has no `task.attempt` to scale against, and the retry-with-more-resources strategy silently does nothing.
+"""
+
+[global]
+title = "Global Best Practices & Standards"
+
+[[global.sections]]
+title = "BioContainers Naming Conventions"
+content = """
+BioContainers images published on Quay.io generally follow the pattern:
+
+`quay.io/biocontainers/<tool>:<version>--<build_string>`
+
+The `<build_string>` suffix (for example `hdfd78af_0`) identifies the exact Bioconda build recipe and environment used to construct the image. It is not decorative — two images with the same tool and version but different build strings can differ in their transitive dependencies. Preserve the full build string when copying a container reference between workflows or configuration files rather than truncating it to just `<tool>:<version>`.
+"""
+
+[[global.sections]]
+title = "Preferring Community Images Over Ad Hoc Ones"
+content = """
+Where a BioContainers image already exists for a tool, it is generally preferable to a personal Docker Hub image or a locally built one: it is version-pinned by convention, built from an auditable Bioconda recipe, and already used across many published pipelines, which makes issues more likely to be caught and fixed upstream rather than silently affecting only one workflow.
+"""
+
+[[global.sections]]
+title = "Reproducibility Through Containers"
+content = """
+Nextflow has built-in support for Docker and Singularity/Apptainer containers, which is what allows a pipeline shared on GitHub to be pulled down and executed by someone else with the exact same software environment, rather than relying on whatever happens to already be installed on their machine. Combining explicit resource declarations with pinned containers is what actually makes a pipeline reproducible end-to-end — resource limits alone don't guarantee the same software runs, and pinned containers alone don't guarantee the scheduler can allocate the job correctly.
+"""
+
+[[global.sections]]
+title = "Independent, Composable Processes"
+content = """
+A Nextflow pipeline is structured as a graph: processes are nodes, channels are the edges connecting their inputs and outputs. Processes that don't depend on each other's outputs can run in parallel automatically — there is no manual parallelization code to write, but this only holds if a process's script is genuinely self-contained and does not assume some other process has already run and left files in a particular local location outside of the declared channel inputs.
+"""
+
+[[global.sections]]
+title = "AWS Batch Profile Shape"
+content = """
+An AWS Batch profile needs to tell Nextflow which executor to use and which compute queue to submit to; everything else (instance types, scaling) is typically managed by the AWS Batch compute environment itself, not the pipeline:
+
+```groovy
+profiles {
+  awsbatch {
+    process.executor = 'awsbatch'
+    process.queue = 'my-batch-queue'
+    aws.region = 'us-east-1'
+    workDir = 's3://my-bucket/work'
+  }
+}
+```
+
+The work directory must point to object storage (e.g. S3) reachable by the Batch compute environment — a local or NFS path will not be visible to the remote workers.
+"""
+
+[[global.sections]]
+title = "Google Cloud Batch / Life Sciences Profile Shape"
+content = """
+Google Cloud's batch executors follow the same pattern: declare the executor, then supply the project and region Nextflow should submit jobs into:
+
+```groovy
+profiles {
+  gcb {
+    process.executor = 'google-batch'
+    google.project = 'my-gcp-project'
+    google.location = 'us-central1'
+    workDir = 'gs://my-bucket/work'
+  }
+}
+```
+
+Older pipelines may reference `google-lifesciences` instead of `google-batch` — both exist because Google Cloud Life Sciences was the predecessor API; new pipelines should prefer `google-batch`.
+"""
+
+[[global.sections]]
+title = "Why Local-Only Assumptions Break in the Cloud"
+content = """
+Workflows written only for a shared local filesystem or a specific scheduler's flags (for example, hardcoding `clusterOptions = '-p some_local_partition'` for SLURM) fail outright when pointed at a cloud executor, because cloud compute nodes generally do not share a common filesystem the way an HPC cluster's nodes do, and cloud schedulers don't recognize on-prem scheduler flags. Preferring abstract resource requests (cpus, memory, time) over executor-specific flags is what lets the same process definition run unmodified on a local machine, an HPC cluster, or a cloud batch service — the executor translates the abstract request into whatever its underlying platform requires.
+"""
+
+[[global.sections]]
+title = "Tool Registry Service (TRS)"
+content = """
+The GA4GH Tool Registry Service (TRS) API standardizes how workflows and tools are described and discovered across independent registries. Platforms like WorkflowHub and Dockstore both expose a TRS-compatible API, which is what allows a workflow published on one registry to be discovered, described, and referenced consistently by any other TRS-aware tool, without that tool needing custom integration code per registry. A workflow that wants to be TRS-discoverable needs consistent identifying metadata — name, version, description, author — since the TRS API indexes and serves workflows based on exactly these fields.
+"""
+
+[[global.sections]]
+title = "Workflow Execution Service (WES)"
+content = """
+The GA4GH Workflow Execution Service (WES) API standardizes how a workflow (written in Nextflow, WDL, CWL, or Snakemake) is submitted for execution across different compute environments, independent of which engine ultimately runs it. Because a WES-compliant submission may run on infrastructure the workflow's author has no direct access to, the workflow must be self-contained: every input file the workflow needs must be resolvable from a remote location (object storage such as S3/GCS, or a versioned repository such as GitHub) rather than a hardcoded local path on the author's own machine. A workflow that depends on an absolute path like `/home/user/data/reference.fa` cannot be executed remotely through WES, because that path simply does not exist on the execution backend.
+"""
+
+[[global.sections]]
+title = "Why This Matters for Portability Checks"
+content = """
+The properties GA4GH's registry and execution standards actually require — pinned, discoverable tool versions; no hardcoded local paths; explicit resource declarations — are the same properties that make a workflow portable to any cloud environment in the first place. A workflow that passes basic cloud-readiness checks (pinned containers, declared resources, no absolute local paths) is, not coincidentally, also much closer to being TRS- and WES-compliant than one that doesn't.
+"""

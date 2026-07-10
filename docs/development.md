@@ -286,7 +286,55 @@ Add tests to `tests/test_rules.py` covering your rule class:
 
 ---
 
-## 6. Related Files
+## 6. How the Rule Knowledge Store Works
+
+To provide context-aware suggestions and GA4GH standards alignment context, Workflow Clinic utilizes a curated, local knowledge base stored as a TOML file.
+
+### Adding and Extending Rule Knowledge
+
+All rule knowledge and recommendations are stored in a single unified TOML file under `src/workflow_clinic/kb/rules_knowledge.toml`. 
+
+To extend or update the knowledge base, add a table representing the rule ID (or `global` for general guidelines) and add sections containing titles and contents:
+
+```toml
+[W001]
+title = "Pinned Container"
+
+[[W001.sections]]
+title = "Why Unpinned Containers Break Reproducibility"
+content = """
+A container reference without an explicit version...
+"""
+
+[global]
+title = "Global Best Practices & Standards"
+
+[[global.sections]]
+title = "Tool Registry Service (TRS)"
+content = """
+The Tool Registry Service API...
+"""
+```
+
+### The Knowledge Store API
+
+The lookup logic is packaged inside `src/workflow_clinic/advisor/retriever.py` via the `RuleKnowledgeStore` class:
+
+```python
+from workflow_clinic.advisor import RuleKnowledgeStore
+
+# 1. Initialize the store (loads the embedded TOML file)
+store = RuleKnowledgeStore()
+
+# 2. Query for relevant guidelines matching a specific finding ID
+results = store.retrieve(finding_id="W001")
+```
+
+Updates to the TOML file are picked up the next time a new `RuleKnowledgeStore` instance is created (the file is loaded at initialization).
+
+---
+
+## 7. Related Files
 
 | File | Purpose |
 |------|---------|
@@ -298,7 +346,9 @@ Add tests to `tests/test_rules.py` covering your rule class:
 | `src/workflow_clinic/rules/runner.py` | `RuleRunner` logic |
 | `src/workflow_clinic/rules/container.py` | `PinnedContainerRule` implementation |
 | `src/workflow_clinic/rules/resources.py` | `ResourceLimitsRule` implementation |
+| `src/workflow_clinic/advisor/retriever.py` | `RuleKnowledgeStore` lookup implementation |
 | `src/workflow_clinic/exceptions.py` | Exception hierarchy |
 | `tests/test_rules.py` | Rule engine validation tests |
+| `tests/test_knowledge_store.py` | Knowledge store retriever tests |
 | `tests/test_cli.py` | Command-line interface and diagnostics checks |
 
