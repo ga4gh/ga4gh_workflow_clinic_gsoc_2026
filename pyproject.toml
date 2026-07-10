@@ -27,7 +27,6 @@ dependencies = [
     "pydantic>=2.0",
     "groovy-parser>=0.2.2",
     "rich",
-    "chromadb>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -56,7 +55,7 @@ Changelog = "https://github.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026/releases"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"workflow_clinic" = ["kb/*.md"]
+"workflow_clinic" = ["kb/*.toml"]
 
 # --- Ruff (Linter + Formatter) ---
 [tool.ruff]

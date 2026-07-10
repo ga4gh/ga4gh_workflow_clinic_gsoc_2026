@@ -286,59 +286,51 @@ Add tests to `tests/test_rules.py` covering your rule class:
 
 ---
 
-## 6. How the RAG Retriever and Knowledge Base Work
+## 6. How the Rule Knowledge Store Works
 
-To provide context-aware suggestions and GA4GH standards alignment context, Workflow Clinic utilizes a local vector database powered by ChromaDB.
+To provide context-aware suggestions and GA4GH standards alignment context, Workflow Clinic utilizes a curated, local knowledge base stored as a TOML file.
 
-### Adding Knowledge Base (KB) Files
+### Adding and Extending Rule Knowledge
 
-All knowledge base documents are stored as standard Markdown files under `src/workflow_clinic/kb/`. 
+All rule knowledge and recommendations are stored in a single unified TOML file under `src/workflow_clinic/kb/rules_knowledge.toml`. 
 
-To write or extend KB files, split them into sections using HTML comment markers. Each marker specifies which rule IDs that section is relevant to:
+To extend or update the knowledge base, add a table representing the rule ID (or `global` for general guidelines) and add sections containing titles and contents:
 
-```markdown
-<!-- rule: W001 -->
-## Section Heading
-Content specific to pinned containers (Rule W001)...
+```toml
+[W001]
+title = "Pinned Container"
 
-<!-- rule: global -->
-## General standards alignment
-Content applicable to all diagnostics (WES, TRS details)...
+[[W001.sections]]
+title = "Why Unpinned Containers Break Reproducibility"
+content = """
+A container reference without an explicit version...
+"""
 
-<!-- rule: W001, W002 -->
-## Combined Rule Section
-Content applicable to both container and resource checks...
+[global]
+title = "Global Best Practices & Standards"
+
+[[global.sections]]
+title = "Tool Registry Service (TRS)"
+content = """
+The Tool Registry Service API...
+"""
 ```
 
-*   **Multi-rule mapping:** When a section is tagged with multiple rule IDs (comma-separated), the indexer duplicates the section under each tag.
-*   **Global tag:** Chunks marked `global` are always eligible for retrieval regardless of the queried `finding_id`.
+### The Knowledge Store API
 
-### The RAG Retriever API
-
-The database client and indexing logic are packaged inside `src/workflow_clinic/advisor/retriever.py`:
+The lookup logic is packaged inside `src/workflow_clinic/advisor/retriever.py` via the `RAGRetriever` class (maintained for backward compatibility with the GSoC proposal and architecture CLI design, but operating as a deterministic static lookup store rather than a vector-based search engine):
 
 ```python
 from workflow_clinic.advisor import RAGRetriever
 
-# 1. Initialize retriever (persists local db to ~/.workflow_clinic/chromadb/)
+# 1. Initialize the retriever (loads the embedded TOML file)
 retriever = RAGRetriever()
 
-# 2. Query for relevant context matching a specific finding ID
-results = retriever.retrieve(
-    finding_id="W001",
-    query="Quay.io biocontainers format",
-    n_results=3  # Standard amount of context to retrieve
-)
+# 2. Query for relevant guidelines matching a specific finding ID
+results = retriever.retrieve(finding_id="W001")
 ```
 
-### Development & Index Reset
-
-The retriever persists index embeddings to disk under the user's home folder. 
-*   **Stale Indices:** If you update or create a Markdown file in `src/workflow_clinic/kb/` during development, your local index will not automatically refresh since it skips indexing when the DB count is greater than zero.
-*   **How to reset:** Delete the local database folder to force a re-index:
-    ```bash
-    rm -rf ~/.workflow_clinic/chromadb/
-    ```
+Unlike database-backed retrievers, updates to the TOML file are immediate and require no manual index refreshes or database deletions.
 
 ---
 
@@ -354,9 +346,9 @@ The retriever persists index embeddings to disk under the user's home folder.
 | `src/workflow_clinic/rules/runner.py` | `RuleRunner` logic |
 | `src/workflow_clinic/rules/container.py` | `PinnedContainerRule` implementation |
 | `src/workflow_clinic/rules/resources.py` | `ResourceLimitsRule` implementation |
-| `src/workflow_clinic/advisor/retriever.py` | `RAGRetriever` database search logic |
+| `src/workflow_clinic/advisor/retriever.py` | `RAGRetriever` knowledge base lookup store |
 | `src/workflow_clinic/exceptions.py` | Exception hierarchy |
 | `tests/test_rules.py` | Rule engine validation tests |
-| `tests/test_rag.py` | RAG retriever and ChromaDB tests |
+| `tests/test_knowledge_store.py` | Knowledge store retriever tests |
 | `tests/test_cli.py` | Command-line interface and diagnostics checks |
 
