@@ -51,19 +51,19 @@ def test_verbose_option() -> None:
         root_logger.setLevel(original_level)
 
 
-def test_diagnose_clean_workflow() -> None:
-    """Verify diagnose CLI command on a clean workflow succeeds with exit code 0."""
+def test_examine_clean_workflow() -> None:
+    """Verify examine CLI command on a clean workflow succeeds with exit code 0."""
     dummy_path = str(Path(__file__).parent / "fixtures" / "dummy.nf")
-    result = runner.invoke(app, ["diagnose", dummy_path])
+    result = runner.invoke(app, ["examine", dummy_path])
     assert result.exit_code == 0
     assert "No issues found" in result.output
     assert "clean and cloud-ready" in result.output
 
 
-def test_diagnose_poor_practices() -> None:
-    """Verify diagnose CLI command on a flawed workflow lists issues and exits with code 1."""
+def test_examine_poor_practices() -> None:
+    """Verify examine CLI command on a flawed workflow lists issues and exits with code 1."""
     poor_path = str(Path(__file__).parent / "fixtures" / "poor_practices.nf")
-    result = runner.invoke(app, ["diagnose", poor_path])
+    result = runner.invoke(app, ["examine", poor_path])
     # Exits with 1 because there is at least one ERROR
     assert result.exit_code == 1
     assert "Diagnostic Findings for 'poor_practices'" in result.output
@@ -77,17 +77,17 @@ def test_diagnose_poor_practices() -> None:
     assert "Summary: 1 error(s), 4 warning(s), 1 info(s)" in result.output
 
 
-def test_diagnose_unsupported_workflow() -> None:
-    """Verify diagnose CLI command fails with code 1 for unsupported file formats."""
+def test_examine_unsupported_workflow() -> None:
+    """Verify examine CLI command fails with code 1 for unsupported file formats."""
     unsupported_path = str(Path(__file__).parent / "test_cli.py")
-    result = runner.invoke(app, ["diagnose", unsupported_path])
+    result = runner.invoke(app, ["examine", unsupported_path])
     assert result.exit_code == 1
     assert "Error:" in result.stderr
     assert "No registered parser can handle workflow" in result.stderr
 
 
-def test_diagnose_nonexistent_file() -> None:
-    """Verify diagnose CLI command fails with a Typer validation error on invalid path."""
-    result = runner.invoke(app, ["diagnose", "non_existent_file.nf"])
+def test_examine_nonexistent_file() -> None:
+    """Verify examine CLI command fails with a Typer validation error on invalid path."""
+    result = runner.invoke(app, ["examine", "non_existent_file.nf"])
     assert result.exit_code != 0
     assert "does not exist" in result.output
