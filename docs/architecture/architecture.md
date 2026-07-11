@@ -234,7 +234,7 @@ The project should remain **rule-first and AI-optional**.
 |---|---|---|---|
 | Tier 0 | Rule Engine | 1.0 | Missing container field |
 | Tier 1 | AI Verification | ≥ 0.75 | Is Conda-only intentional? |
-| Tier 2 | AI Deep Analysis (RAG) | 0.6–0.85 | Undocumented dependencies |
+| Tier 2 | AI Deep Analysis | 0.6–0.85 | Undocumented dependencies |
 
 ---
 
@@ -251,11 +251,11 @@ The Doctor component proposes fixes.
 |---|---|---|
 | Layer 1 | AST-based (safest) | Insert missing container directive |
 | Layer 2 | Regex / template | Replace `:latest` tags with pinned versions |
-| Layer 3 | AI-generated (last resort) | Complex restructuring, grounded via RAG |
+| Layer 3 | AI-generated (last resort) | Complex restructuring, grounded via Rule Knowledge Store |
 
 ---
 
-## RAG Knowledge Base
+## Rule Knowledge Base
 
 **Purpose:** Reduce hallucinations and ground AI responses.
 
@@ -268,7 +268,7 @@ The Doctor component proposes fixes.
 - Nextflow documentation
 - Snakemake documentation
 
-**Storage:** ChromaDB (local, offline)
+**Storage:** rules_knowledge.toml (local, offline)
 
 ---
 
