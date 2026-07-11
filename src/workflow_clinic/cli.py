@@ -91,7 +91,7 @@ _SEVERITY_COLORS: dict[Severity, str] = {
 
 
 @app.command()
-def diagnose(
+def examine(
     path: Annotated[
         Path,
         typer.Argument(
@@ -100,11 +100,11 @@ def diagnose(
             dir_okay=True,
             readable=True,
             resolve_path=True,
-            help="Path to the workflow file or directory to diagnose.",
+            help="Path to the workflow file or directory to examine.",
         ),
     ],
 ) -> None:
-    """Diagnose a workflow for portability and cloud-readiness issues."""
+    """Examine a workflow for portability and cloud-readiness issues."""
     # 1. Detect parser
     try:
         parser_name = ParserRegistry.detect_parser(path)
