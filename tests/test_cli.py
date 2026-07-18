@@ -1,14 +1,17 @@
 """Unit tests for the command-line interface (CLI) options."""
 
+import importlib.util
 import logging
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from workflow_clinic import __version__
 from workflow_clinic.cli import app
 
 runner = CliRunner()
+HAS_NEXTFLOW = importlib.util.find_spec("groovy_parser") is not None
 
 
 def test_version_option() -> None:
@@ -51,6 +54,7 @@ def test_verbose_option() -> None:
         root_logger.setLevel(original_level)
 
 
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
 def test_examine_clean_workflow() -> None:
     """Verify examine CLI command on a clean workflow succeeds with exit code 0."""
     dummy_path = str(Path(__file__).parent / "fixtures" / "dummy.nf")
@@ -60,6 +64,7 @@ def test_examine_clean_workflow() -> None:
     assert "clean and cloud-ready" in result.output
 
 
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
 def test_examine_poor_practices() -> None:
     """Verify examine CLI command on a flawed workflow lists issues and exits with code 1."""
     poor_path = str(Path(__file__).parent / "fixtures" / "poor_practices.nf")

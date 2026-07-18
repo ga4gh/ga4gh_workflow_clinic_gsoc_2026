@@ -25,11 +25,16 @@ classifiers = [
 dependencies = [
     "typer[all]>=0.12",
     "pydantic>=2.0",
-    "groovy-parser>=0.2.2",
     "rich",
 ]
 
 [project.optional-dependencies]
+nextflow = [
+    "groovy-parser>=0.2.2",
+]
+all_parsers = [
+    "workflow-clinic[nextflow]",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
@@ -45,6 +50,9 @@ dev = [
 
 [project.scripts]
 workflow-clinic = "workflow_clinic.main:app"
+
+[project.entry-points."workflow_clinic.parsers"]
+nextflow = "workflow_clinic.parsers.nextflow:NextflowParser"
 
 [project.urls]
 Homepage = "https://github.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026"

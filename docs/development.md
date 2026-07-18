@@ -175,15 +175,12 @@ structured library instead:
 
 ### Step 3: Register the Parser
 
-Add the import and registration call in `src/workflow_clinic/parsers/__init__.py`:
+Add the parser entry point registration in `pyproject.toml` under the `[project.entry-points."workflow_clinic.parsers"]` table:
 
-```python
-from workflow_clinic.parsers.registry import ParserRegistry
-from workflow_clinic.parsers.nextflow import NextflowParser
-from workflow_clinic.parsers.my_language import MyLanguageParser
-
-ParserRegistry.register("nextflow", NextflowParser)
-ParserRegistry.register("mylanguage", MyLanguageParser)
+```toml
+[project.entry-points."workflow_clinic.parsers"]
+nextflow = "workflow_clinic.parsers.nextflow:NextflowParser"
+mylanguage = "workflow_clinic.parsers.my_language:MyLanguageParser"
 ```
 
 ### Step 4: Map Objects to the Common Schema
@@ -208,15 +205,41 @@ Run the suite with:
 pytest tests/test_my_language_parser.py -v
 ```
 
+### Step 6: Declare Dependencies in pyproject.toml
+
+If your parser has external dependencies, isolate them under their own optional group inside `pyproject.toml`:
+
+```toml
+[project.optional-dependencies]
+mylanguage = [
+    "mylanguage-parser>=1.0.0",
+]
+```
+
+To keep aggregate targets up-to-date, also append your language group reference to the `all_parsers` extra:
+
+```toml
+all_parsers = [
+    "workflow-clinic[nextflow]",
+    "workflow-clinic[mylanguage]",
+]
+```
+
+Finally, re-install the package in editable mode to register the entry points and update your environment:
+```bash
+pip install -e ".[dev,mylanguage]"
+```
+
 ---
 
 ## 4. Common Pitfalls
 
-- **Forgetting to register the parser** in
-  `src/workflow_clinic/parsers/__init__.py` — `can_parse()` working in
+- **Forgetting to register the parser entry point** in
+  `pyproject.toml` — `can_parse()` working in
   isolation doesn't mean the registry will find it.
+- **Forgetting to run `pip install -e .`** after adding a new entry point during development so Python registers it in the virtual environment.
 - **Circular imports** — don't import `ParserRegistry` from inside your
-  parser module; register from `__init__.py` instead.
+  parser module.
 - **Swallowing the original exception** — always use
   `raise InvalidWorkflowError(...) from exc`, never a bare
   `raise InvalidWorkflowError(...)`, or you lose the traceback.
@@ -331,6 +354,15 @@ results = store.retrieve(finding_id="W001")
 ```
 
 Updates to the TOML file are picked up the next time a new `RuleKnowledgeStore` instance is created (the file is loaded at initialization).
+
+### Installing Language Support
+
+`workflow-clinic` ships with no language parsers installed by default. Install support for the languages you need:
+
+```bash
+pip install "workflow-clinic[nextflow]"   # Nextflow support
+pip install "workflow-clinic[all_parsers]" # everything available
+```
 
 ---
 

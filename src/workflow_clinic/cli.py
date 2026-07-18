@@ -11,6 +11,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from workflow_clinic import __version__
@@ -109,17 +110,27 @@ def examine(
     try:
         parser_name = ParserRegistry.detect_parser(path)
     except UnsupportedWorkflowError as e:
-        err_console.print(f"[red]Error:[/red] {e}")
+        err_console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise typer.Exit(code=1) from e
 
     logger.info("Detected parser: %s", parser_name)
-    parser = ParserRegistry.get_parser(parser_name)
 
     # 2. Parse workflow
     try:
+        parser = ParserRegistry.get_parser(parser_name)
         bundle = parser.parse(path)
-    except (InvalidWorkflowError, ParserError) as e:
-        err_console.print(f"[red]Parse error:[/red] {e}")
+    except (InvalidWorkflowError, ParserError, ImportError) as e:
+        err_console.print(f"[red]Parse error:[/red] {escape(str(e))}")
+        if (
+            isinstance(e, (ImportError, ParserError))
+            or "not installed" in str(e)
+            or isinstance(e.__cause__, ModuleNotFoundError)
+        ):
+            install_cmd = f"pip install 'workflow-clinic[{parser_name}]'"
+            err_console.print(
+                f"[bold]Tip:[/bold] Try installing with: "
+                f"[green]{escape(install_cmd)}[/green]"
+            )
         raise typer.Exit(code=1) from e
 
     logger.info(
