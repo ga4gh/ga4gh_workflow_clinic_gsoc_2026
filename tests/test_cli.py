@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from workflow_clinic import __version__
 from workflow_clinic.cli import app
+from workflow_clinic.parsers import ParserRegistry
 
 runner = CliRunner()
 HAS_NEXTFLOW = importlib.util.find_spec("groovy_parser") is not None
@@ -96,3 +97,25 @@ def test_examine_nonexistent_file() -> None:
     result = runner.invoke(app, ["examine", "non_existent_file.nf"])
     assert result.exit_code != 0
     assert "does not exist" in result.output
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+def test_examine_explicit_type_bypass(monkeypatch) -> None:
+    """Verify that passing --type nextflow bypasses detect_parser() and successfully runs the parser."""
+    dummy_path = str(Path(__file__).parent / "fixtures" / "dummy.nf")
+
+    # Track calls to detect_parser using a spy
+    detect_called = False
+    original_detect = ParserRegistry.detect_parser
+
+    def spy_detect(path):
+        nonlocal detect_called
+        detect_called = True
+        return original_detect(path)
+
+    monkeypatch.setattr(ParserRegistry, "detect_parser", spy_detect)
+
+    result = runner.invoke(app, ["examine", dummy_path, "--type", "nextflow"])
+    assert result.exit_code == 0
+    assert not detect_called
+    assert "No issues found" in result.output

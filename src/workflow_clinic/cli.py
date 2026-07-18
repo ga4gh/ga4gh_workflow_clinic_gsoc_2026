@@ -104,14 +104,25 @@ def examine(
             help="Path to the workflow file or directory to examine.",
         ),
     ],
+    parser_type: Annotated[
+        str | None,
+        typer.Option(
+            "--type",
+            "-t",
+            help="Explicitly specify the parser type, bypassing auto-detection.",
+        ),
+    ] = None,
 ) -> None:
     """Examine a workflow for portability and cloud-readiness issues."""
     # 1. Detect parser
-    try:
-        parser_name = ParserRegistry.detect_parser(path)
-    except UnsupportedWorkflowError as e:
-        err_console.print(f"[red]Error:[/red] {escape(str(e))}")
-        raise typer.Exit(code=1) from e
+    if parser_type:
+        parser_name = parser_type
+    else:
+        try:
+            parser_name = ParserRegistry.detect_parser(path)
+        except UnsupportedWorkflowError as e:
+            err_console.print(f"[red]Error:[/red] {escape(str(e))}")
+            raise typer.Exit(code=1) from e
 
     logger.info("Detected parser: %s", parser_name)
 
@@ -119,13 +130,12 @@ def examine(
     try:
         parser = ParserRegistry.get_parser(parser_name)
         bundle = parser.parse(path)
-    except (InvalidWorkflowError, ParserError, ImportError) as e:
+    except (InvalidWorkflowError, ParserError) as e:
         err_console.print(f"[red]Parse error:[/red] {escape(str(e))}")
-        if (
-            isinstance(e, (ImportError, ParserError))
-            or "not installed" in str(e)
-            or isinstance(e.__cause__, ModuleNotFoundError)
-        ):
+        is_missing_dependency = isinstance(e, ParserError) or isinstance(
+            e.__cause__, ModuleNotFoundError
+        )
+        if is_missing_dependency:
             install_cmd = f"pip install 'workflow-clinic[{parser_name}]'"
             err_console.print(
                 f"[bold]Tip:[/bold] Try installing with: "
