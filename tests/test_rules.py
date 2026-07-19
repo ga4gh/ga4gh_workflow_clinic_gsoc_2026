@@ -9,6 +9,7 @@ from workflow_clinic.parsers import ParserRegistry
 from workflow_clinic.rules import (
     BaseRule,
     Finding,
+    HardcodedPathRule,
     PinnedContainerRule,
     ResourceLimitsRule,
     RuleRegistry,
@@ -238,6 +239,94 @@ def test_resource_limits_rule() -> None:
     assert "memory resource limit" in findings_no_mem[0].message
 
 
+def test_hardcoded_path_rule_flags_absolute_path() -> None:
+    """Verify HardcodedPathRule flags a real absolute path in a script block."""
+    rule = HardcodedPathRule()
+    task = Task(
+        id="t1",
+        name="Task1",
+        command="samtools index /home/user/data/aligned.bam",
+    )
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    findings = rule.check(bundle)
+    assert len(findings) == 1
+    assert "/home/user/data/aligned.bam" in findings[0].message
+    assert findings[0].severity == Severity.WARNING
+    assert findings[0].rule_id == "W003"
+
+
+def test_hardcoded_path_rule_ignores_standard_shell_paths() -> None:
+    """Verify standard shell paths are excluded, not flagged."""
+    rule = HardcodedPathRule()
+    task = Task(
+        id="t2",
+        name="Task2",
+        command="#!/bin/bash\necho 'hi' > /dev/stdout",
+    )
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    assert rule.check(bundle) == []
+
+
+def test_hardcoded_path_rule_ignores_urls() -> None:
+    """Verify URLs and docker:// refs are not flagged as paths."""
+    rule = HardcodedPathRule()
+    task = Task(
+        id="t3",
+        name="Task3",
+        command="curl -O https://example.com/genome.fa",
+    )
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    assert rule.check(bundle) == []
+
+
+def test_hardcoded_path_rule_ignores_relative_paths() -> None:
+    """Verify relative/dynamic paths are not flagged."""
+    rule = HardcodedPathRule()
+    task = Task(
+        id="t4",
+        name="Task4",
+        command="samtools sort ./data/input.bam -o output.bam",
+    )
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    assert rule.check(bundle) == []
+
+
+def test_hardcoded_path_rule_skips_tasks_without_command() -> None:
+    """Verify rule handles tasks with no command gracefully."""
+    rule = HardcodedPathRule()
+    task = Task(id="t5", name="Task5")
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    assert rule.check(bundle) == []
+
+
+def test_hardcoded_path_rule_catches_assignment_glued_path() -> None:
+    """Verify VAR=/absolute/path (no space around =) is caught."""
+    rule = HardcodedPathRule()
+    task = Task(
+        id="t6",
+        name="Task6",
+        command="REF=/home/user/data/ref.fa",
+    )
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    findings = rule.check(bundle)
+    assert len(findings) == 1
+    assert "/home/user/data/ref.fa" in findings[0].message
+
+
+def test_hardcoded_path_rule_catches_redirect_glued_path() -> None:
+    """Verify 2>/absolute/path (redirect glued to path) is caught."""
+    rule = HardcodedPathRule()
+    task = Task(
+        id="t7",
+        name="Task7",
+        command="samtools view in.bam 2>/home/user/error.log",
+    )
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    findings = rule.check(bundle)
+    assert len(findings) == 1
+    assert "/home/user/error.log" in findings[0].message
+
+
 def test_rules_end_to_end_with_fixtures() -> None:
     """Integration test: execute rules runner on realistic NF fixtures."""
     # Positive control: dummy.nf has zero findings
@@ -280,3 +369,14 @@ def test_rules_end_to_end_with_fixtures() -> None:
         "NO_RESOURCES",
         "TAGLESS_IMAGE",
     }
+
+    # W003 integration test: hardcoded_paths.nf fixture
+    p_paths = Path(__file__).parent / "fixtures" / "hardcoded_paths.nf"
+    parser_paths = ParserRegistry.get_parser(ParserRegistry.detect_parser(p_paths))
+    bundle_paths = parser_paths.parse(p_paths)
+
+    findings_paths = runner.run(bundle_paths, rule_ids=["W003"])
+    assert len(findings_paths) == 1
+    assert findings_paths[0].rule_id == "W003"
+    assert "USES_HARDCODED_PATH" in findings_paths[0].message
+    assert "/home/revaa/Desktop/data/aligned.bam" in findings_paths[0].message

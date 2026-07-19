@@ -104,6 +104,43 @@ class NextflowParser(BaseParser):
             results.extend(self._collect_block_statements(child))
         return results
 
+    def _find_script_statement(self, node: Any) -> dict[str, Any] | None:
+        """Recursively find the script/shell block statement in a process AST.
+
+        Looks for a labeled statement of the form ``script:`` or ``shell:``
+        and returns the containing node so the caller can extract the
+        string content that follows the colon.
+        """
+        if not isinstance(node, dict):
+            return None
+        children = node.get("children", [])
+        if len(children) >= 2:  # noqa: PLR2004
+            identifier_val = self._find_leaf_value(children[0], ["IDENTIFIER"])
+            colon_val = self._find_leaf_value(children[1], ["COLON"])
+            if identifier_val in ("script", "shell") and colon_val == ":":
+                return node
+        for child in children:
+            result = self._find_script_statement(child)
+            if result is not None:
+                return result
+        return None
+
+    def _collect_script_text(self, node: Any) -> str:
+        """Recursively collect leaf values representing the script content.
+
+        Skips GString begin/end delimiters (triple-quotes) so only the
+        actual script body text is returned.
+        """
+        if not isinstance(node, dict):
+            return ""
+        if "leaf" in node:
+            leaf_type = node["leaf"]
+            if leaf_type in ("GSTRING_BEGIN", "GSTRING_END"):
+                return ""
+            return str(node.get("value", ""))
+        parts = [self._collect_script_text(child) for child in node.get("children", [])]
+        return "".join(parts)
+
     def _extract_directives(
         self, p_node: dict[str, Any]
     ) -> tuple[str | None, str | None, str | None]:
@@ -156,6 +193,12 @@ class NextflowParser(BaseParser):
 
             container_image, cpus, memory = self._extract_directives(p)
 
+            # Extract script block content for downstream rule inspection
+            script_text: str | None = None
+            script_stmt = self._find_script_statement(p)
+            if script_stmt and len(script_stmt.get("children", [])) >= 3:  # noqa: PLR2004
+                script_text = self._collect_script_text(script_stmt["children"][2])
+
             # Construct resources and Task models
             try:
                 cpus_val = None
@@ -174,6 +217,7 @@ class NextflowParser(BaseParser):
                 task = Task(
                     id=process_name,
                     name=process_name,
+                    command=script_text,
                     resources=resources,
                 )
             except (ValueError, ValidationError) as e:

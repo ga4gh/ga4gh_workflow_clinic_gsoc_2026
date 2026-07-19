@@ -6,6 +6,7 @@ here rather than from submodules directly.
 
 from workflow_clinic.rules.base import BaseRule, Finding, Severity
 from workflow_clinic.rules.container import PinnedContainerRule
+from workflow_clinic.rules.paths import HardcodedPathRule
 from workflow_clinic.rules.registry import RuleRegistry
 from workflow_clinic.rules.resources import ResourceLimitsRule
 from workflow_clinic.rules.runner import RuleRunner
@@ -13,10 +14,12 @@ from workflow_clinic.rules.runner import RuleRunner
 # Register built-in rules
 RuleRegistry.register(PinnedContainerRule)
 RuleRegistry.register(ResourceLimitsRule)
+RuleRegistry.register(HardcodedPathRule)
 
 __all__ = [
     "BaseRule",
     "Finding",
+    "HardcodedPathRule",
     "PinnedContainerRule",
     "ResourceLimitsRule",
     "RuleRegistry",
