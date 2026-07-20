@@ -327,6 +327,28 @@ def test_hardcoded_path_rule_catches_redirect_glued_path() -> None:
     assert "/home/user/error.log" in findings[0].message
 
 
+def test_hardcoded_path_rule_catches_quoted_absolute_paths() -> None:
+    """Verify quoted absolute paths are caught (e.g. inside variables or redirects)."""
+    rule = HardcodedPathRule()
+    task1 = Task(
+        id="t8",
+        name="Task8",
+        command='VAR="/home/user/ref.fa"',
+    )
+    task2 = Task(
+        id="t9",
+        name="Task9",
+        command='samtools view in.bam 2>"/home/user/error.log"',
+    )
+    bundle = WorkflowBundle(
+        metadata=WorkflowMetadata(name="test"), tasks=[task1, task2]
+    )
+    findings = rule.check(bundle)
+    assert len(findings) == 2
+    assert "/home/user/ref.fa" in findings[0].message
+    assert "/home/user/error.log" in findings[1].message
+
+
 def test_rules_end_to_end_with_fixtures() -> None:
     """Integration test: execute rules runner on realistic NF fixtures."""
     # Positive control: dummy.nf has zero findings
@@ -379,4 +401,4 @@ def test_rules_end_to_end_with_fixtures() -> None:
     assert len(findings_paths) == 1
     assert findings_paths[0].rule_id == "W003"
     assert "USES_HARDCODED_PATH" in findings_paths[0].message
-    assert "/home/revaa/Desktop/data/aligned.bam" in findings_paths[0].message
+    assert "/home/user/data/aligned.bam" in findings_paths[0].message

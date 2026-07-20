@@ -71,22 +71,22 @@ class HardcodedPathRule(BaseRule):
                 continue
 
             for token in script.split():
-                # Strip common surrounding punctuation/quotes before checking
-                stripped = token.strip("'\"(),;")
                 # Split on = and > to catch bash idioms like
                 # VAR=/home/user/ref.fa or 2>/home/user/error.log
-                candidates = _TOKEN_DELIMITERS.split(stripped)
+                candidates = _TOKEN_DELIMITERS.split(token)
                 for candidate in candidates:
-                    if not candidate:
+                    # Strip common surrounding punctuation/quotes from each candidate
+                    stripped = candidate.strip("'\"(),;")
+                    if not stripped:
                         continue
-                    if _is_flaggable_absolute_path(candidate):
+                    if _is_flaggable_absolute_path(stripped):
                         findings.append(
                             Finding(
                                 rule_id=self.id,
                                 severity=Severity.WARNING,
                                 message=(
                                     f"Process '{task.name}' contains a "
-                                    f"hardcoded absolute path: '{candidate}'. "
+                                    f"hardcoded absolute path: '{stripped}'. "
                                     f"This will break on other machines or "
                                     f"in cloud environments."
                                 ),

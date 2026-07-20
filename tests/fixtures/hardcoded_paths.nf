@@ -19,7 +19,7 @@ process USES_HARDCODED_PATH {
 
     script:
     """
-    samtools index /home/revaa/Desktop/data/aligned.bam
+    samtools index /home/user/data/aligned.bam
     """
 }
 
