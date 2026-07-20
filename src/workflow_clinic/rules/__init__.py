@@ -21,12 +21,11 @@ RuleRegistry.register(HardcodedCredentialsRule)
 __all__ = [
     "BaseRule",
     "Finding",
-    "HardcodedPathRule",
     "HardcodedCredentialsRule",
+    "HardcodedPathRule",
     "PinnedContainerRule",
     "ResourceLimitsRule",
     "RuleRegistry",
     "RuleRunner",
     "Severity",
 ]
-

@@ -10,8 +10,8 @@ from workflow_clinic.parsers import ParserRegistry
 from workflow_clinic.rules import (
     BaseRule,
     Finding,
-    HardcodedPathRule,
     HardcodedCredentialsRule,
+    HardcodedPathRule,
     PinnedContainerRule,
     ResourceLimitsRule,
     RuleRegistry,
@@ -413,28 +413,70 @@ def test_rules_end_to_end_with_fixtures() -> None:
 def test_hardcoded_credentials_rule_vendor_prefix() -> None:
     """Verify vendor-prefix patterns are caught and reported as Severity.ERROR."""
     rule = HardcodedCredentialsRule()
-    # AWS key pattern
-    task1 = Task(
-        id="t1",
-        name="Task1",
-        command="export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
-    )
-    # GitHub PAT pattern
-    task2 = Task(
-        id="t2",
-        name="Task2",
-        command="gh_token = 'ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789'",
-    )
-    bundle = WorkflowBundle(
-        metadata=WorkflowMetadata(name="test"), tasks=[task1, task2]
-    )
+    tasks = [
+        Task(
+            id="t1",
+            name="Task1",
+            command="export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+        ),
+        Task(
+            id="t2",
+            name="Task2",
+            command="aws_secret_access_key = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'",
+        ),
+        Task(
+            id="t3",
+            name="Task3",
+            command="gh_token = 'ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789'",
+        ),
+        Task(
+            id="t4",
+            name="Task4",
+            command="gh_org = 'gho_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789'",
+        ),
+        Task(
+            id="t5",
+            name="Task5",
+            command="github_fine = 'github_pat_1234567890123456789012'",
+        ),
+        Task(
+            id="t6",
+            name="Task6",
+            command="slack = 'xoxb-1234567890-1234567890-aBcDfGhIjK'",
+        ),
+        Task(
+            id="t8",
+            name="Task8",
+            command="google = 'AIzaSyA-1234567890123456789012345678abc'",
+        ),
+    ]
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=tasks)
     findings = rule.check(bundle)
-    assert len(findings) == 2
+    assert len(findings) == 7
     assert all(f.severity == Severity.ERROR for f in findings)
-    assert "AWS Access Key" in findings[0].message
-    assert "AKIAIOSF..." in findings[0].message
-    assert "GitHub PAT" in findings[1].message
-    assert "ghp_aBcD..." in findings[1].message
+    assert any(
+        "AWS Access Key" in f.message and "AKIAIOSF..." in f.message for f in findings
+    )
+    assert any(
+        "AWS Secret Access Key" in f.message and "wJalrXUt..." in f.message
+        for f in findings
+    )
+    assert any(
+        "GitHub PAT" in f.message and "ghp_aBcD..." in f.message for f in findings
+    )
+    assert any(
+        "GitHub PAT" in f.message and "gho_aBcD..." in f.message for f in findings
+    )
+    assert any(
+        "GitHub Fine-Grained PAT" in f.message and "github_p..." in f.message
+        for f in findings
+    )
+    assert any(
+        "Slack Token" in f.message and "xoxb-123..." in f.message for f in findings
+    )
+    assert any(
+        "Google API Key" in f.message and "AIzaSyA-..." in f.message for f in findings
+    )
 
 
 def test_hardcoded_credentials_rule_generic_entropy() -> None:
@@ -477,6 +519,10 @@ def test_hardcoded_credentials_rule_short_value_ignored() -> None:
     assert rule.check(bundle) == []
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("groovy_parser") is None,
+    reason="Nextflow support not installed",
+)
 def test_hardcoded_credentials_rule_integration() -> None:
     """Integration test: execute HardcodedCredentialsRule on parsed fixture."""
     p_creds = Path(__file__).parent / "fixtures" / "hardcoded_credentials.nf"
@@ -485,10 +531,20 @@ def test_hardcoded_credentials_rule_integration() -> None:
 
     runner = RuleRunner()
     findings_creds = runner.run(bundle_creds, rule_ids=["W004"])
-    # USES_AWS_KEY (ERROR) + USES_GENERIC_HIGH_ENTROPY_SECRET (WARNING) = 2 findings
-    assert len(findings_creds) == 2
+    # USES_AWS_KEY (1) + USES_GENERIC_HIGH_ENTROPY_SECRET (1) + USES_ALL_VENDORS (7) = 9 findings
+    assert len(findings_creds) == 9
 
-    aws_finding = next(f for f in findings_creds if "AWS Access Key" in f.message)
+    errors = [f for f in findings_creds if f.severity == Severity.ERROR]
+    warnings = [f for f in findings_creds if f.severity == Severity.WARNING]
+
+    assert len(errors) == 8
+    assert len(warnings) == 1
+
+    aws_finding = next(
+        f
+        for f in findings_creds
+        if "AWS Access Key" in f.message and "AKIAIOSF" in f.message
+    )
     assert aws_finding.severity == Severity.ERROR
     assert aws_finding.location == "USES_AWS_KEY"
 

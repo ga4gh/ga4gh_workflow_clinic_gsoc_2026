@@ -19,10 +19,13 @@ from workflow_clinic.rules.base import BaseRule, Finding, Severity
 # Layer 1: known vendor formats. Near-zero false positive by construction.
 _VENDOR_PATTERNS: dict[str, re.Pattern[str]] = {
     "AWS Access Key": re.compile(r"AKIA[0-9A-Z]{16}"),
-    "GitHub PAT": re.compile(r"ghp_[A-Za-z0-9]{36}"),
+    "AWS Secret Access Key": re.compile(
+        r"(?i)aws_secret_access_key\s*=\s*['\"]([A-Za-z0-9+/]{40})['\"]"
+    ),
+    "GitHub PAT": re.compile(r"gh[pous]_[A-Za-z0-9]{36}"),
     "GitHub Fine-Grained PAT": re.compile(r"github_pat_[A-Za-z0-9_]{22,}"),
     "Slack Token": re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
-    "Stripe Key": re.compile(r"sk_(live|test)_[A-Za-z0-9]{24,}"),
+    "Stripe Key": re.compile(r"sk_(?:live|test)_[A-Za-z0-9]{24,}"),
     "Google API Key": re.compile(r"AIza[0-9A-Za-z_-]{35}"),
 }
 
@@ -82,23 +85,24 @@ class HardcodedCredentialsRule(BaseRule):
     def _check_vendor_patterns(self, task, script: str) -> list[Finding]:
         findings: list[Finding] = []
         for vendor_name, pattern in _VENDOR_PATTERNS.items():
-            findings.extend(
-                [
+            for match in pattern.finditer(script):
+                matched_val = (
+                    match.group(1) if match.lastindex is not None else match.group(0)
+                )
+                findings.append(
                     Finding(
                         rule_id=self.id,
                         severity=Severity.ERROR,
                         message=(
                             f"Process '{task.name}' appears to contain a "
-                            f"hardcoded {vendor_name}: '{match.group(0)[:8]}...'. "
+                            f"hardcoded {vendor_name}: '{matched_val[:8]}...'. "
                             f"Remove this and use a secrets manager or "
                             f"environment variable instead."
                         ),
                         task_id=task.id,
                         location=task.name,
                     )
-                    for match in pattern.finditer(script)
-                ]
-            )
+                )
         return findings
 
     def _check_generic_assignments(self, task, script: str) -> list[Finding]:
