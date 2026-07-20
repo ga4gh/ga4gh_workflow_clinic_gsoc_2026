@@ -11,6 +11,7 @@ from workflow_clinic.rules import (
     BaseRule,
     Finding,
     HardcodedPathRule,
+    HardcodedCredentialsRule,
     PinnedContainerRule,
     ResourceLimitsRule,
     RuleRegistry,
@@ -407,3 +408,92 @@ def test_rules_end_to_end_with_fixtures() -> None:
     assert findings_paths[0].rule_id == "W003"
     assert "USES_HARDCODED_PATH" in findings_paths[0].message
     assert "/home/user/data/aligned.bam" in findings_paths[0].message
+
+
+def test_hardcoded_credentials_rule_vendor_prefix() -> None:
+    """Verify vendor-prefix patterns are caught and reported as Severity.ERROR."""
+    rule = HardcodedCredentialsRule()
+    # AWS key pattern
+    task1 = Task(
+        id="t1",
+        name="Task1",
+        command="export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    )
+    # GitHub PAT pattern
+    task2 = Task(
+        id="t2",
+        name="Task2",
+        command="gh_token = 'ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789'",
+    )
+    bundle = WorkflowBundle(
+        metadata=WorkflowMetadata(name="test"), tasks=[task1, task2]
+    )
+    findings = rule.check(bundle)
+    assert len(findings) == 2
+    assert all(f.severity == Severity.ERROR for f in findings)
+    assert "AWS Access Key" in findings[0].message
+    assert "AKIAIOSF..." in findings[0].message
+    assert "GitHub PAT" in findings[1].message
+    assert "ghp_aBcD..." in findings[1].message
+
+
+def test_hardcoded_credentials_rule_generic_entropy() -> None:
+    """Verify high-entropy keys with suspicious names are flagged as Severity.WARNING."""
+    rule = HardcodedCredentialsRule()
+    task = Task(
+        id="t1",
+        name="Task1",
+        command="password = 'aK9x!mQ7zP2sW8vB4nR6tY1c'",
+    )
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    findings = rule.check(bundle)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.WARNING
+    assert "high-entropy value" in findings[0].message
+    assert "password" in findings[0].message
+
+
+def test_hardcoded_credentials_rule_placeholder_ignored() -> None:
+    """Verify low-entropy placeholders are ignored."""
+    rule = HardcodedCredentialsRule()
+    task = Task(
+        id="t1",
+        name="Task1",
+        command="password = 'YOUR_PASSWORD_HERE'",
+    )
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    assert rule.check(bundle) == []
+
+
+def test_hardcoded_credentials_rule_short_value_ignored() -> None:
+    """Verify values shorter than length gate are ignored even if high entropy."""
+    rule = HardcodedCredentialsRule()
+    task = Task(
+        id="t1",
+        name="Task1",
+        command="password = 'aB9!'",  # High entropy but short
+    )
+    bundle = WorkflowBundle(metadata=WorkflowMetadata(name="test"), tasks=[task])
+    assert rule.check(bundle) == []
+
+
+def test_hardcoded_credentials_rule_integration() -> None:
+    """Integration test: execute HardcodedCredentialsRule on parsed fixture."""
+    p_creds = Path(__file__).parent / "fixtures" / "hardcoded_credentials.nf"
+    parser_creds = ParserRegistry.get_parser(ParserRegistry.detect_parser(p_creds))
+    bundle_creds = parser_creds.parse(p_creds)
+
+    runner = RuleRunner()
+    findings_creds = runner.run(bundle_creds, rule_ids=["W004"])
+    # USES_AWS_KEY (ERROR) + USES_GENERIC_HIGH_ENTROPY_SECRET (WARNING) = 2 findings
+    assert len(findings_creds) == 2
+
+    aws_finding = next(f for f in findings_creds if "AWS Access Key" in f.message)
+    assert aws_finding.severity == Severity.ERROR
+    assert aws_finding.location == "USES_AWS_KEY"
+
+    entropy_finding = next(
+        f for f in findings_creds if "high-entropy value" in f.message
+    )
+    assert entropy_finding.severity == Severity.WARNING
+    assert entropy_finding.location == "USES_GENERIC_HIGH_ENTROPY_SECRET"

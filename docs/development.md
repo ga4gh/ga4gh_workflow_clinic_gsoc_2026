@@ -373,6 +373,7 @@ pip install "workflow-clinic[all_parsers]" # everything available
 | `tests/fixtures/dummy.nf` | Realistic DSL2 test fixture |
 | `tests/fixtures/poor_practices.nf` | Flawed DSL2 test fixture demonstrating violations |
 | `tests/fixtures/hardcoded_paths.nf` | Test fixture for W003 hardcoded path detection |
+| `tests/fixtures/hardcoded_credentials.nf` | Test fixture for W004 hardcoded credentials detection |
 | `src/workflow_clinic/parsers/nextflow.py` | Nextflow parser implementation |
 | `src/workflow_clinic/rules/base.py` | `BaseRule` interface, `Finding` model, and `Severity` enum |
 | `src/workflow_clinic/rules/registry.py` | `RuleRegistry` lookup mechanics |
@@ -380,6 +381,7 @@ pip install "workflow-clinic[all_parsers]" # everything available
 | `src/workflow_clinic/rules/container.py` | `PinnedContainerRule` implementation (W001) |
 | `src/workflow_clinic/rules/resources.py` | `ResourceLimitsRule` implementation (W002) |
 | `src/workflow_clinic/rules/paths.py` | `HardcodedPathRule` implementation (W003) |
+| `src/workflow_clinic/rules/credentials.py` | `HardcodedCredentialsRule` implementation (W004) |
 | `src/workflow_clinic/advisor/retriever.py` | `RuleKnowledgeStore` lookup implementation |
 | `src/workflow_clinic/exceptions.py` | Exception hierarchy |
 | `tests/test_rules.py` | Rule engine validation tests |
