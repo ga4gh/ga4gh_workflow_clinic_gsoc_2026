@@ -1,5 +1,6 @@
 """Unit and integration tests for the Workflow Clinic rule engine."""
 
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -238,6 +239,10 @@ def test_resource_limits_rule() -> None:
     assert "memory resource limit" in findings_no_mem[0].message
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("groovy_parser") is None,
+    reason="Nextflow support not installed",
+)
 def test_rules_end_to_end_with_fixtures() -> None:
     """Integration test: execute rules runner on realistic NF fixtures."""
     # Positive control: dummy.nf has zero findings

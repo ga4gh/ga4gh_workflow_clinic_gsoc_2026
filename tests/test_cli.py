@@ -1,14 +1,18 @@
 """Unit tests for the command-line interface (CLI) options."""
 
+import importlib.util
 import logging
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from workflow_clinic import __version__
 from workflow_clinic.cli import app
+from workflow_clinic.parsers import ParserRegistry
 
 runner = CliRunner()
+HAS_NEXTFLOW = importlib.util.find_spec("groovy_parser") is not None
 
 
 def test_version_option() -> None:
@@ -51,6 +55,7 @@ def test_verbose_option() -> None:
         root_logger.setLevel(original_level)
 
 
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
 def test_examine_clean_workflow() -> None:
     """Verify examine CLI command on a clean workflow succeeds with exit code 0."""
     dummy_path = str(Path(__file__).parent / "fixtures" / "dummy.nf")
@@ -60,6 +65,7 @@ def test_examine_clean_workflow() -> None:
     assert "clean and cloud-ready" in result.output
 
 
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
 def test_examine_poor_practices() -> None:
     """Verify examine CLI command on a flawed workflow lists issues and exits with code 1."""
     poor_path = str(Path(__file__).parent / "fixtures" / "poor_practices.nf")
@@ -91,3 +97,25 @@ def test_examine_nonexistent_file() -> None:
     result = runner.invoke(app, ["examine", "non_existent_file.nf"])
     assert result.exit_code != 0
     assert "does not exist" in result.output
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+def test_examine_explicit_type_bypass(monkeypatch) -> None:
+    """Verify that passing --type nextflow bypasses detect_parser() and successfully runs the parser."""
+    dummy_path = str(Path(__file__).parent / "fixtures" / "dummy.nf")
+
+    # Track calls to detect_parser using a spy
+    detect_called = False
+    original_detect = ParserRegistry.detect_parser
+
+    def spy_detect(path):
+        nonlocal detect_called
+        detect_called = True
+        return original_detect(path)
+
+    monkeypatch.setattr(ParserRegistry, "detect_parser", spy_detect)
+
+    result = runner.invoke(app, ["examine", dummy_path, "--type", "nextflow"])
+    assert result.exit_code == 0
+    assert not detect_called
+    assert "No issues found" in result.output
