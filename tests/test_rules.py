@@ -1,5 +1,6 @@
 """Unit and integration tests for the Workflow Clinic rule engine."""
 
+import importlib.util
 from pathlib import Path
 
 import pytest

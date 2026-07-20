@@ -1,12 +1,18 @@
 """Unit and integration tests for the Nextflow parser."""
 
+import importlib.util
 from pathlib import Path
 
 import pytest
 
-from workflow_clinic.exceptions import InvalidWorkflowError, ParserError
-from workflow_clinic.parsers import ParserRegistry
-from workflow_clinic.parsers.nextflow import NextflowParser
+HAS_NEXTFLOW = importlib.util.find_spec("groovy_parser") is not None
+
+if not HAS_NEXTFLOW:
+    pytest.skip("groovy-parser dependency not installed", allow_module_level=True)
+
+from workflow_clinic.exceptions import InvalidWorkflowError, ParserError  # noqa: E402
+from workflow_clinic.parsers import ParserRegistry  # noqa: E402
+from workflow_clinic.parsers.nextflow import NextflowParser  # noqa: E402
 
 VALID_NF_CONTENT = """
 process FASTQC {
