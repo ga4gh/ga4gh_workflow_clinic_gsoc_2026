@@ -350,6 +350,10 @@ def test_hardcoded_path_rule_catches_quoted_absolute_paths() -> None:
     assert "/home/user/error.log" in findings[1].message
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("groovy_parser") is None,
+    reason="Nextflow support not installed",
+)
 def test_rules_end_to_end_with_fixtures() -> None:
     """Integration test: execute rules runner on realistic NF fixtures."""
     # Positive control: dummy.nf has zero findings
