@@ -102,7 +102,7 @@ def test_can_parse_methods(tmp_path: Path) -> None:
 def test_nextflow_parser_registration() -> None:
     """Verify NextflowParser is registered automatically under 'nextflow'."""
     parser = ParserRegistry.get_parser("nextflow")
-    assert parser.__class__.__name__ == "NextflowParser"
+    assert isinstance(parser, NextflowParser)
 
 
 def test_parsing_valid_file(tmp_path: Path) -> None:
@@ -173,9 +173,7 @@ def test_error_handling_scenarios(tmp_path: Path) -> None:
     workflow_dir.mkdir()
     with pytest.raises(ParserError) as exc_info:
         parser.parse(workflow_dir, entrypoint="missing.nf")
-    assert "Entrypoint file not found" in str(
-        exc_info.value
-    ) or "No .nf workflow files" in str(exc_info.value)
+    assert "Entrypoint file not found" in str(exc_info.value)
 
     # Scenario 3: Empty workflow file
     empty_file = tmp_path / "empty.nf"

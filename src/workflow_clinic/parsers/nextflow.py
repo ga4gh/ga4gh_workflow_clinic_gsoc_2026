@@ -208,8 +208,6 @@ class NextflowParser(BaseParser):
 
         return container_image, cpus, memory
 
-        return container_image, cpus, memory
-
     def _parse_processes(self, ast: Any) -> list[Task]:
         """Traverse the AST to extract processes and map them to Task structures."""
         tasks = []
@@ -298,7 +296,12 @@ class NextflowParser(BaseParser):
             return WorkflowBundle(metadata=metadata, tasks=tasks)
 
         if path.is_dir():
-            nf_files = sorted(path.rglob("*.nf"))
+            ignored_parts = {".git", ".nextflow", "work", "bin"}
+            nf_files = [
+                f
+                for f in sorted(path.rglob("*.nf"))
+                if not any(part in ignored_parts for part in f.parts)
+            ]
             if not nf_files:
                 msg = f"No .nf workflow files found in directory: {path}"
                 raise ParserError(msg)
@@ -310,6 +313,10 @@ class NextflowParser(BaseParser):
                     all_tasks.extend(tasks)
                 except (InvalidWorkflowError, ParserError):
                     pass
+
+            if not all_tasks:
+                msg = f"No valid tasks parsed from .nf files in directory: {path}"
+                raise InvalidWorkflowError(msg)
 
             metadata = WorkflowMetadata(name=path.name)
             return WorkflowBundle(metadata=metadata, tasks=all_tasks)

@@ -28,7 +28,7 @@ def _match_pattern(path: Path, pattern: str) -> bool:
         if path.is_dir():
             return any(path.rglob(f"*{pattern}"))
     if path.is_dir():
-        return (path / pattern).exists() or any(path.rglob("*.nf"))
+        return (path / pattern).exists()
     return path.name == pattern
 
 
