@@ -4,7 +4,6 @@ This module houses the Typer application, global option callbacks,
 and CLI command routing.
 """
 
-import json
 import logging
 import sys
 from pathlib import Path
@@ -113,14 +112,6 @@ def examine(
             help="Explicitly specify the parser type, bypassing auto-detection.",
         ),
     ] = None,
-    output: Annotated[
-        Path,
-        typer.Option(
-            "--output",
-            "-o",
-            help="Path to save diagnosis JSON report (default: diagnosis.json).",
-        ),
-    ] = Path("diagnosis.json"),
 ) -> None:
     """Examine a workflow for portability and cloud-readiness issues."""
     # 1. Detect parser
@@ -135,7 +126,7 @@ def examine(
 
     logger.info("Detected parser: %s", parser_name)
 
-    # 2. Parse workflow & 3. Run rules
+    # 2. Parse workflow
     console.print(f"\n[cyan]Scanning workflow at '{path.name}'...[/cyan]")
     try:
         parser = ParserRegistry.get_parser(parser_name)
@@ -159,18 +150,9 @@ def examine(
         len(bundle.tasks),
     )
 
+    # 3. Run rules
     runner = RuleRunner()
     findings = runner.run(bundle)
-
-    # Export diagnosis.json (always generated per proposal spec)
-    diagnosis_data = {
-        "workflow_name": bundle.metadata.name,
-        "tasks_count": len(bundle.tasks),
-        "findings_count": len(findings),
-        "findings": [f.model_dump() for f in findings],
-    }
-    output.write_text(json.dumps(diagnosis_data, indent=2))
-    console.print(f"[green]✓[/green] Saved diagnosis report to [bold]{output}[/bold]")
 
     # 4. Display results
     if not findings:
