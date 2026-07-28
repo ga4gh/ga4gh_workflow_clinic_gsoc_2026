@@ -3,7 +3,6 @@
 import importlib.util
 import json
 import logging
-import os
 from pathlib import Path
 
 import pytest
@@ -58,49 +57,45 @@ def test_verbose_option() -> None:
 
 
 @pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
-def test_examine_clean_workflow(tmp_path: Path) -> None:
+def test_examine_clean_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify examine CLI command on a clean workflow succeeds with exit code 0."""
-    original_dir = Path.cwd()
-    os.chdir(tmp_path)
-    try:
-        dummy_path = str(Path(__file__).parent / "fixtures" / "dummy.nf")
-        result = runner.invoke(app, ["examine", dummy_path])
-        assert result.exit_code == 0
-        assert "No issues found" in result.output
-        assert "clean and cloud-ready" in result.output
-        # diagnosis.json is always auto-generated
-        assert (tmp_path / "diagnosis.json").exists()
-        data = json.loads((tmp_path / "diagnosis.json").read_text())
-        assert data["findings_count"] == 0
-    finally:
-        os.chdir(original_dir)
+    monkeypatch.chdir(tmp_path)
+    dummy_path = str(Path(__file__).parent / "fixtures" / "dummy.nf")
+    result = runner.invoke(app, ["examine", dummy_path])
+    assert result.exit_code == 0
+    assert "No issues found" in result.output
+    assert "clean and cloud-ready" in result.output
+    # diagnosis.json is always auto-generated
+    assert (tmp_path / "diagnosis.json").exists()
+    data = json.loads((tmp_path / "diagnosis.json").read_text())
+    assert data["findings_count"] == 0
 
 
 @pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
-def test_examine_poor_practices(tmp_path: Path) -> None:
+def test_examine_poor_practices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify examine CLI command on a flawed workflow lists issues and exits with code 1."""
-    original_dir = Path.cwd()
-    os.chdir(tmp_path)
-    try:
-        poor_path = str(Path(__file__).parent / "fixtures" / "poor_practices.nf")
-        result = runner.invoke(app, ["examine", poor_path])
-        # Exits with 1 because there is at least one ERROR
-        assert result.exit_code == 1
-        assert "Diagnostic Findings for 'poor_practices'" in result.output
-        assert "ERROR" in result.output
-        assert "WARNING" in result.output
-        assert "INFO" in result.output
-        assert "NO_CONTAINER" in result.output
-        assert "UNPINNED_TAG" in result.output
-        assert "TAGLESS_IMAGE" in result.output
-        assert "NO_RESOURCES" in result.output
-        assert "Summary: 1 error(s), 4 warning(s), 1 info(s)" in result.output
-        # diagnosis.json is always auto-generated
-        assert (tmp_path / "diagnosis.json").exists()
-        data = json.loads((tmp_path / "diagnosis.json").read_text())
-        assert data["findings_count"] > 0
-    finally:
-        os.chdir(original_dir)
+    monkeypatch.chdir(tmp_path)
+    poor_path = str(Path(__file__).parent / "fixtures" / "poor_practices.nf")
+    result = runner.invoke(app, ["examine", poor_path])
+    # Exits with 1 because there is at least one ERROR
+    assert result.exit_code == 1
+    assert "Diagnostic Findings for 'poor_practices'" in result.output
+    assert "ERROR" in result.output
+    assert "WARNING" in result.output
+    assert "INFO" in result.output
+    assert "NO_CONTAINER" in result.output
+    assert "UNPINNED_TAG" in result.output
+    assert "TAGLESS_IMAGE" in result.output
+    assert "NO_RESOURCES" in result.output
+    assert "Summary: 1 error(s), 4 warning(s), 1 info(s)" in result.output
+    # diagnosis.json is always auto-generated
+    assert (tmp_path / "diagnosis.json").exists()
+    data = json.loads((tmp_path / "diagnosis.json").read_text())
+    assert data["findings_count"] > 0
 
 
 def test_examine_unsupported_workflow() -> None:

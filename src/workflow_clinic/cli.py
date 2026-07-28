@@ -169,8 +169,17 @@ def examine(
         "findings_count": len(findings),
         "findings": [f.model_dump() for f in findings],
     }
-    output.write_text(json.dumps(diagnosis_data, indent=2))
-    console.print(f"[green]✓[/green] Saved diagnosis report to [bold]{output}[/bold]")
+    try:
+        output.write_text(json.dumps(diagnosis_data, indent=2))
+        console.print(
+            f"[green]✓[/green] Saved diagnosis report to [bold]{escape(str(output))}[/bold]"
+        )
+    except OSError as e:
+        err_console.print(
+            f"[red]Error:[/red] Could not write diagnosis report to "
+            f"'{escape(str(output))}': {escape(str(e))}"
+        )
+        raise typer.Exit(code=1) from e
 
     # 4. Display results
     if not findings:
