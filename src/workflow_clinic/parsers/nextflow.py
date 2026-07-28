@@ -33,7 +33,7 @@ class NextflowParser(BaseParser):
         if path.is_file():
             return path.suffix == ".nf"
         if path.is_dir():
-            return (path / "main.nf").is_file()
+            return any(path.rglob("*.nf"))
         return False
 
     def _resolve_script_file(self, path: Path, entrypoint: str | None) -> Path:
@@ -70,6 +70,19 @@ class NextflowParser(BaseParser):
             if val is not None:
                 return val
         return None
+
+    def _find_all_leaf_values(self, node: Any, leaf_types: list[str]) -> list[str]:
+        """Recursively search for all leaf nodes of specified types and return their values."""
+        results: list[str] = []
+        if not isinstance(node, dict):
+            return results
+        if "leaf" in node and node["leaf"] in leaf_types:
+            val = node.get("value")
+            if val is not None:
+                results.append(str(val))
+        for child in node.get("children", []):
+            results.extend(self._find_all_leaf_values(child, leaf_types))
+        return results
 
     def _collect_processes(self, node: Any) -> list[dict[str, Any]]:
         """Collect all command_expression nodes representing process declarations."""
@@ -141,6 +154,23 @@ class NextflowParser(BaseParser):
         parts = [self._collect_script_text(child) for child in node.get("children", [])]
         return "".join(parts)
 
+    def _extract_container_image(
+        self, s_children: list[Any], literal_types: list[str]
+    ) -> str | None:
+        """Select preferred container image literal from statement children."""
+        literals = self._find_all_leaf_values(
+            {"children": s_children[1:]}, literal_types
+        )
+        pinned = [item for item in literals if ":" in item or "/" in item]
+        real_images = [item for item in pinned if item not in ("singularity", "docker")]
+        if real_images:
+            return real_images[0]
+        if pinned:
+            return pinned[0]
+        if literals:
+            return literals[0]
+        return None
+
     def _extract_directives(
         self, p_node: dict[str, Any]
     ) -> tuple[str | None, str | None, str | None]:
@@ -150,31 +180,33 @@ class NextflowParser(BaseParser):
         memory = None
 
         statements = self._collect_block_statements(p_node)
+        literal_types = [
+            "STRING_LITERAL",
+            "STRING_LITERAL_PART",
+            "FLOATING_POINT_LITERAL",
+            "INTEGER_LITERAL",
+            "NUMERIC_LITERAL",
+        ]
+
         for s in statements:
             s_children = s.get("children", [])
             if not s_children:
                 continue
 
             directive_name = self._find_leaf_value(s_children[0], ["IDENTIFIER"])
-            if directive_name not in ("container", "cpus", "memory"):
-                continue
+            if directive_name == "container":
+                container_image = self._extract_container_image(
+                    s_children, literal_types
+                )
+            elif directive_name in ("cpus", "memory"):
+                val = self._find_leaf_value({"children": s_children[1:]}, literal_types)
+                if val is not None:
+                    if directive_name == "cpus":
+                        cpus = val
+                    elif directive_name == "memory":
+                        memory = val
 
-            # Search the remaining arguments for any string or numeric literal
-            literal_types = [
-                "STRING_LITERAL",
-                "STRING_LITERAL_PART",
-                "FLOATING_POINT_LITERAL",
-                "INTEGER_LITERAL",
-                "NUMERIC_LITERAL",
-            ]
-            val = self._find_leaf_value({"children": s_children[1:]}, literal_types)
-            if val is not None:
-                if directive_name == "container":
-                    container_image = val
-                elif directive_name == "cpus":
-                    cpus = val
-                elif directive_name == "memory":
-                    memory = val
+        return container_image, cpus, memory
 
         return container_image, cpus, memory
 
@@ -227,33 +259,14 @@ class NextflowParser(BaseParser):
             tasks.append(task)
         return tasks
 
-    def parse(self, path: Path, entrypoint: str | None = None) -> WorkflowBundle:
-        """Parse a Nextflow workflow path into a WorkflowBundle.
-
-        Args:
-            path: Path to a workflow file or directory
-            entrypoint: Optional entrypoint file name (for directory-based workflows)
-
-        Returns:
-            WorkflowBundle representation of the Nextflow workflow
-
-        Raises:
-            ParserError: If path is not found or is inaccessible
-            InvalidWorkflowError: If workflow content is empty or malformed
-        """
-        if not path.exists():
-            msg = f"Path does not exist: {path}"
-            raise ParserError(msg)
-
-        script_file = self._resolve_script_file(path, entrypoint)
-
+    def _parse_file_tasks(self, script_file: Path) -> list[Task]:
+        """Parse a single Nextflow file and return its extracted process tasks."""
         try:
             content = script_file.read_text(encoding="utf-8")
         except Exception as e:
             msg = f"Failed to read file {script_file}: {e}"
             raise ParserError(msg) from e
 
-        # Basic validation: ensure file is not empty or whitespace only
         if not content.strip():
             msg = f"Workflow file is empty: {script_file}"
             raise InvalidWorkflowError(msg)
@@ -267,10 +280,39 @@ class NextflowParser(BaseParser):
             msg = f"Failed to parse Nextflow file {script_file}: {e}"
             raise ParserError(msg) from e
 
-        tasks = self._parse_processes(ast)
-        metadata = WorkflowMetadata(name=script_file.stem)
+        return self._parse_processes(ast)
 
-        return WorkflowBundle(
-            metadata=metadata,
-            tasks=tasks,
-        )
+    def parse(self, path: Path, entrypoint: str | None = None) -> WorkflowBundle:
+        """Parse a Nextflow workflow path into a WorkflowBundle.
+
+        Supports single .nf files, specified entrypoints, or directory scanning.
+        """
+        if not path.exists():
+            msg = f"Path does not exist: {path}"
+            raise ParserError(msg)
+
+        if entrypoint or path.is_file():
+            script_file = self._resolve_script_file(path, entrypoint)
+            tasks = self._parse_file_tasks(script_file)
+            metadata = WorkflowMetadata(name=script_file.stem)
+            return WorkflowBundle(metadata=metadata, tasks=tasks)
+
+        if path.is_dir():
+            nf_files = sorted(path.rglob("*.nf"))
+            if not nf_files:
+                msg = f"No .nf workflow files found in directory: {path}"
+                raise ParserError(msg)
+
+            all_tasks: list[Task] = []
+            for f in nf_files:
+                try:
+                    tasks = self._parse_file_tasks(f)
+                    all_tasks.extend(tasks)
+                except (InvalidWorkflowError, ParserError):
+                    pass
+
+            metadata = WorkflowMetadata(name=path.name)
+            return WorkflowBundle(metadata=metadata, tasks=all_tasks)
+
+        msg = f"Unsupported path type: {path}"
+        raise ParserError(msg)
