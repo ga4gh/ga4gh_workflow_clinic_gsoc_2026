@@ -70,7 +70,6 @@ where = ["src"]
 target-version = "py312"
 line-length = 88
 src = ["src", "tests"]
-exclude = ["temp_validation_workflows", "scratch"]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -80,7 +79,6 @@ ignore = [
     "COM812",  # missing trailing comma (conflicts with formatter)
     "ISC001",  # implicit string concatenation (conflicts with formatter)
     "E501",    # line too long (handled by formatter)
-    "CPY",     # flake8-copyright (copyright notice checks)
 ]
 
 [tool.ruff.lint.isort]
