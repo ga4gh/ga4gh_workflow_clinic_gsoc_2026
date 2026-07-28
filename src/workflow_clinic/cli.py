@@ -170,7 +170,8 @@ def examine(
         "findings": [f.model_dump() for f in findings],
     }
     try:
-        output.write_text(json.dumps(diagnosis_data, indent=2))
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(diagnosis_data, indent=2) + "\n", encoding="utf-8")
         console.print(
             f"[green]✓[/green] Saved diagnosis report to [bold]{escape(str(output))}[/bold]"
         )
