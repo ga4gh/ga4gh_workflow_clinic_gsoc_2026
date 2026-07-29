@@ -31,6 +31,60 @@ class NextflowParser(BaseParser):
             return (path / "main.nf").is_file() or any(path.rglob("*.nf"))
         return False
 
+    def discover_dependencies(  # noqa: C901
+        self, path: Path, entrypoint: str | None = None
+    ) -> list[Path]:
+        """Discover Nextflow workflow files by following DSL2 include statements.
+
+        Recursively resolves imported subworkflows/modules starting from the
+        given entrypoint file or directory.
+        """
+        if not path.exists():
+            return []
+
+        files_to_visit: list[Path] = []
+        if path.is_file() or entrypoint:
+            try:
+                files_to_visit.append(self._resolve_script_file(path, entrypoint))
+            except ParserError:
+                return []
+        elif path.is_dir():
+            main_file = path / "main.nf"
+            if main_file.is_file():
+                files_to_visit.append(main_file)
+            else:
+                ignored_parts = {".git", ".nextflow", "work", "bin"}
+                files_to_visit = [
+                    f
+                    for f in sorted(path.rglob("*.nf"))
+                    if not any(part in ignored_parts for part in f.parts)
+                ]
+
+        discovered: list[Path] = []
+        visited: set[Path] = set()
+
+        def _traverse(target: Path) -> None:
+            resolved = target.resolve()
+            if resolved in visited or not target.is_file():
+                return
+            visited.add(resolved)
+            discovered.append(target)
+
+            try:
+                content = target.read_text(encoding="utf-8")
+                base_dir = target.parent
+                for inc in self._extract_include_paths(content):
+                    inc_file = self._resolve_include_file(base_dir, inc)
+                    if inc_file:
+                        _traverse(inc_file)
+            except (InvalidWorkflowError, ParserError, OSError):
+                pass
+
+        for start_file in files_to_visit:
+            _traverse(start_file)
+
+        return discovered
+
     def _resolve_script_file(self, path: Path, entrypoint: str | None) -> Path:
         """Resolve the script file path from the given directory/file path."""
         if path.is_file():

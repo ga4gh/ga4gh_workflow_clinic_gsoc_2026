@@ -200,6 +200,28 @@ def test_include_statement_dependency_tracing(tmp_path: Path) -> None:
     assert task.resources.cpus == 2
 
 
+def test_discover_dependencies(tmp_path: Path) -> None:
+    """Verify discover_dependencies returns all imported workflow files."""
+    pipeline_dir = tmp_path / "my_pipeline"
+    pipeline_dir.mkdir()
+
+    modules_dir = pipeline_dir / "modules"
+    modules_dir.mkdir()
+
+    module_file = modules_dir / "fastqc.nf"
+    module_file.write_text("process FASTQC {}")
+
+    main_file = pipeline_dir / "main.nf"
+    main_file.write_text("include { FASTQC } from './modules/fastqc'")
+
+    parser = NextflowParser()
+    deps = parser.discover_dependencies(main_file)
+
+    assert len(deps) == 2
+    assert main_file in deps
+    assert module_file in deps
+
+
 def test_error_handling_scenarios(tmp_path: Path) -> None:
     """Verify parser raises appropriate exceptions for invalid scenarios."""
     parser = NextflowParser()

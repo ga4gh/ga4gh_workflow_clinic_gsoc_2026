@@ -44,3 +44,16 @@ class BaseParser(ABC):
             InvalidWorkflowError: If workflow content is malformed
             ParserError: If parsing fails for other reasons
         """
+
+    def discover_dependencies(self, path: Path) -> list[Path]:
+        """Discover workflow entrypoints and imported file dependencies.
+
+        Args:
+            path: Path to a workflow file or directory
+
+        Returns:
+            List of resolved file paths representing the workflow dependency graph.
+        """
+        if path.is_file():
+            return [path]
+        return []
