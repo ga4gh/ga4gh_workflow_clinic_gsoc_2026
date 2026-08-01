@@ -127,6 +127,7 @@ def examine(
     logger.info("Detected parser: %s", parser_name)
 
     # 2. Parse workflow
+    console.print(f"\n[cyan]Scanning workflow at '{path.name}'...[/cyan]")
     try:
         parser = ParserRegistry.get_parser(parser_name)
         bundle = parser.parse(path)
