@@ -145,9 +145,9 @@ def test_parsing_directory(tmp_path: Path) -> None:
 
     parser = NextflowParser()
 
-    # Test parsing without specifying entrypoint (defaults to main.nf)
+    # Test parsing without specifying entrypoint
     bundle = parser.parse(workflow_dir)
-    assert bundle.metadata.name == "main"
+    assert bundle.metadata.name == "pipeline"
     assert len(bundle.tasks) == 2
 
     # Test parsing specifying custom entrypoint file name
@@ -156,6 +156,70 @@ def test_parsing_directory(tmp_path: Path) -> None:
     bundle_custom = parser.parse(workflow_dir, entrypoint="custom.nf")
     assert bundle_custom.metadata.name == "custom"
     assert len(bundle_custom.tasks) == 2
+
+
+def test_include_statement_dependency_tracing(tmp_path: Path) -> None:
+    """Verify NextflowParser recursively follows DSL2 include statements to construct task bundle."""
+    pipeline_dir = tmp_path / "my_pipeline"
+    pipeline_dir.mkdir()
+
+    modules_dir = pipeline_dir / "modules"
+    modules_dir.mkdir()
+
+    module_file = modules_dir / "fastqc.nf"
+    module_file.write_text("""
+    process FASTQC {
+        container 'biocontainers/fastqc:v0.11.9'
+        cpus 2
+        memory '4 GB'
+
+        script:
+        ""
+        fastqc $reads
+        ""
+    }
+    """)
+
+    main_file = pipeline_dir / "main.nf"
+    main_file.write_text("""
+    include { FASTQC } from './modules/fastqc'
+
+    workflow {
+        FASTQC()
+    }
+    """)
+
+    parser = NextflowParser()
+    bundle = parser.parse(main_file)
+
+    assert bundle.metadata.name == "main"
+    assert len(bundle.tasks) == 1
+    task = bundle.tasks[0]
+    assert task.name == "FASTQC"
+    assert task.resources.container == "biocontainers/fastqc:v0.11.9"
+    assert task.resources.cpus == 2
+
+
+def test_discover_dependencies(tmp_path: Path) -> None:
+    """Verify discover_dependencies returns all imported workflow files."""
+    pipeline_dir = tmp_path / "my_pipeline"
+    pipeline_dir.mkdir()
+
+    modules_dir = pipeline_dir / "modules"
+    modules_dir.mkdir()
+
+    module_file = modules_dir / "fastqc.nf"
+    module_file.write_text("process FASTQC {}")
+
+    main_file = pipeline_dir / "main.nf"
+    main_file.write_text("include { FASTQC } from './modules/fastqc'")
+
+    parser = NextflowParser()
+    deps = parser.discover_dependencies(main_file)
+
+    assert len(deps) == 2
+    assert main_file in deps
+    assert module_file in deps
 
 
 def test_error_handling_scenarios(tmp_path: Path) -> None:

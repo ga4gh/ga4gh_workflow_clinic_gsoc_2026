@@ -1,9 +1,4 @@
-"""Nextflow workflow parser implementation.
-
-This module parses Nextflow files (.nf) and directories containing a main.nf
-file, extracting metadata and processes into a standard WorkflowBundle using AST.
-"""
-
+import re
 from pathlib import Path
 from typing import Any
 
@@ -33,8 +28,62 @@ class NextflowParser(BaseParser):
         if path.is_file():
             return path.suffix == ".nf"
         if path.is_dir():
-            return (path / "main.nf").is_file()
+            return (path / "main.nf").is_file() or any(path.rglob("*.nf"))
         return False
+
+    def discover_dependencies(  # noqa: C901
+        self, path: Path, entrypoint: str | None = None
+    ) -> list[Path]:
+        """Discover Nextflow workflow files by following DSL2 include statements.
+
+        Recursively resolves imported subworkflows/modules starting from the
+        given entrypoint file or directory.
+        """
+        if not path.exists():
+            return []
+
+        files_to_visit: list[Path] = []
+        if path.is_file() or entrypoint:
+            try:
+                files_to_visit.append(self._resolve_script_file(path, entrypoint))
+            except ParserError:
+                return []
+        elif path.is_dir():
+            main_file = path / "main.nf"
+            if main_file.is_file():
+                files_to_visit.append(main_file)
+            else:
+                ignored_parts = {".git", ".nextflow", "work", "bin"}
+                files_to_visit = [
+                    f
+                    for f in sorted(path.rglob("*.nf"))
+                    if not any(part in ignored_parts for part in f.parts)
+                ]
+
+        discovered: list[Path] = []
+        visited: set[Path] = set()
+
+        def _traverse(target: Path) -> None:
+            resolved = target.resolve()
+            if resolved in visited or not target.is_file():
+                return
+            visited.add(resolved)
+            discovered.append(target)
+
+            try:
+                content = target.read_text(encoding="utf-8")
+                base_dir = target.parent
+                for inc in self._extract_include_paths(content):
+                    inc_file = self._resolve_include_file(base_dir, inc)
+                    if inc_file:
+                        _traverse(inc_file)
+            except (InvalidWorkflowError, ParserError, OSError):
+                pass
+
+        for start_file in files_to_visit:
+            _traverse(start_file)
+
+        return discovered
 
     def _resolve_script_file(self, path: Path, entrypoint: str | None) -> Path:
         """Resolve the script file path from the given directory/file path."""
@@ -53,14 +102,31 @@ class NextflowParser(BaseParser):
         msg = f"Unsupported path type: {path}"
         raise ParserError(msg)
 
-    def _find_leaf_value(self, node: Any, leaf_types: list[str]) -> str | None:
-        """Recursively search for a leaf node of specified types and return its value.
+    def _extract_include_paths(self, content: str) -> list[str]:
+        """Extract import path strings from Nextflow DSL2 include statements.
 
-        NOTE: This performs a depth-first search and returns the FIRST matching
-        leaf. It does not evaluate expressions. For closure-based directives
-        like ``memory { 4.GB * task.attempt }``, this returns only the first
-        numeric literal (``"4"``), ignoring unit suffixes and arithmetic.
+        Example:
+            include { FASTQC } from './modules/fastqc/main'
+            --> returns ['./modules/fastqc/main']
         """
+        pattern = r"""include\s*\{[^}]*\}\s*from\s*['"]([^'"]+)['"]"""
+        return re.findall(pattern, content)
+
+    def _resolve_include_file(
+        self, base_dir: Path, include_path_str: str
+    ) -> Path | None:
+        """Resolve a relative include path to an actual .nf script file."""
+        target = base_dir / include_path_str
+        if target.is_file():
+            return target
+        if (base_dir / f"{include_path_str}.nf").is_file():
+            return base_dir / f"{include_path_str}.nf"
+        if (target / "main.nf").is_file():
+            return target / "main.nf"
+        return None
+
+    def _find_leaf_value(self, node: Any, leaf_types: list[str]) -> str | None:
+        """Recursively search for a leaf node of specified types and return its value."""
         if not isinstance(node, dict):
             return None
         if "leaf" in node and node["leaf"] in leaf_types:
@@ -78,8 +144,6 @@ class NextflowParser(BaseParser):
             return results
         if "rule" in node and "command_expression" in node["rule"]:
             children = node.get("children", [])
-            # A process command requires at least 2 components:
-            # the 'process' keyword/token and the process body/name.
             if len(children) >= 2:  # noqa: PLR2004
                 first_val = self._find_leaf_value(children[0], ["IDENTIFIER"])
                 if first_val == "process":
@@ -89,11 +153,7 @@ class NextflowParser(BaseParser):
         return results
 
     def _collect_block_statements(self, node: Any) -> list[dict[str, Any]]:
-        """Collect all block_statement nodes under the closure block.
-
-        We return early when finding a block_statement node to collect process
-        directives without recursing into nested closures (e.g. within scripts).
-        """
+        """Collect all block_statement nodes under the closure block."""
         results: list[dict[str, Any]] = []
         if not isinstance(node, dict):
             return results
@@ -105,12 +165,7 @@ class NextflowParser(BaseParser):
         return results
 
     def _find_script_statement(self, node: Any) -> dict[str, Any] | None:
-        """Recursively find the script/shell block statement in a process AST.
-
-        Looks for a labeled statement of the form ``script:`` or ``shell:``
-        and returns the containing node so the caller can extract the
-        string content that follows the colon.
-        """
+        """Recursively find the script/shell block statement in a process AST."""
         if not isinstance(node, dict):
             return None
         children = node.get("children", [])
@@ -126,11 +181,7 @@ class NextflowParser(BaseParser):
         return None
 
     def _collect_script_text(self, node: Any) -> str:
-        """Recursively collect leaf values representing the script content.
-
-        Skips GString begin/end delimiters (triple-quotes) so only the
-        actual script body text is returned.
-        """
+        """Recursively collect leaf values representing the script content."""
         if not isinstance(node, dict):
             return ""
         if "leaf" in node:
@@ -159,7 +210,6 @@ class NextflowParser(BaseParser):
             if directive_name not in ("container", "cpus", "memory"):
                 continue
 
-            # Search the remaining arguments for any string or numeric literal
             literal_types = [
                 "STRING_LITERAL",
                 "STRING_LITERAL_PART",
@@ -184,7 +234,6 @@ class NextflowParser(BaseParser):
         processes = self._collect_processes(ast)
         for p in processes:
             children = p.get("children", [])
-            # The second child contains the process identifier/name
             process_name = self._find_leaf_value(
                 children[1], ["CAPITALIZED_IDENTIFIER", "IDENTIFIER"]
             )
@@ -193,20 +242,17 @@ class NextflowParser(BaseParser):
 
             container_image, cpus, memory = self._extract_directives(p)
 
-            # Extract script block content for downstream rule inspection
             script_text: str | None = None
             script_stmt = self._find_script_statement(p)
             if script_stmt and len(script_stmt.get("children", [])) >= 3:  # noqa: PLR2004
                 script_text = self._collect_script_text(script_stmt["children"][2])
 
-            # Construct resources and Task models
             try:
                 cpus_val = None
                 if cpus is not None:
                     try:
                         cpus_val = int(cpus)
                     except ValueError:
-                        # Retain raw value so TaskResources validator raises validation error
                         cpus_val = cpus  # type: ignore[assignment]
 
                 resources = TaskResources(
@@ -227,25 +273,17 @@ class NextflowParser(BaseParser):
             tasks.append(task)
         return tasks
 
-    def parse(self, path: Path, entrypoint: str | None = None) -> WorkflowBundle:
-        """Parse a Nextflow workflow path into a WorkflowBundle.
+    def _parse_file_tasks_recursive(
+        self, script_file: Path, visited: set[Path] | None = None
+    ) -> list[Task]:
+        """Parse a Nextflow file and recursively follow DSL2 include statements."""
+        if visited is None:
+            visited = set()
 
-        Args:
-            path: Path to a workflow file or directory
-            entrypoint: Optional entrypoint file name (for directory-based workflows)
-
-        Returns:
-            WorkflowBundle representation of the Nextflow workflow
-
-        Raises:
-            ParserError: If path is not found or is inaccessible
-            InvalidWorkflowError: If workflow content is empty or malformed
-        """
-        if not path.exists():
-            msg = f"Path does not exist: {path}"
-            raise ParserError(msg)
-
-        script_file = self._resolve_script_file(path, entrypoint)
+        resolved_path = script_file.resolve()
+        if resolved_path in visited:
+            return []
+        visited.add(resolved_path)
 
         try:
             content = script_file.read_text(encoding="utf-8")
@@ -253,7 +291,6 @@ class NextflowParser(BaseParser):
             msg = f"Failed to read file {script_file}: {e}"
             raise ParserError(msg) from e
 
-        # Basic validation: ensure file is not empty or whitespace only
         if not content.strip():
             msg = f"Workflow file is empty: {script_file}"
             raise InvalidWorkflowError(msg)
@@ -268,9 +305,72 @@ class NextflowParser(BaseParser):
             raise ParserError(msg) from e
 
         tasks = self._parse_processes(ast)
-        metadata = WorkflowMetadata(name=script_file.stem)
 
-        return WorkflowBundle(
-            metadata=metadata,
-            tasks=tasks,
-        )
+        # Recursively follow DSL2 include statements
+        base_dir = script_file.parent
+        include_paths = self._extract_include_paths(content)
+        for inc in include_paths:
+            inc_file = self._resolve_include_file(base_dir, inc)
+            if inc_file and inc_file.resolve() not in visited:
+                try:
+                    sub_tasks = self._parse_file_tasks_recursive(inc_file, visited)
+                    tasks.extend(sub_tasks)
+                except (InvalidWorkflowError, ParserError):
+                    pass
+
+        return tasks
+
+    def parse(self, path: Path, entrypoint: str | None = None) -> WorkflowBundle:
+        """Parse a Nextflow workflow path into a WorkflowBundle.
+
+        Supports single .nf files, specified entrypoints, or directory scanning
+        with recursive DSL2 include statement graph traversal.
+        """
+        if not path.exists():
+            msg = f"Path does not exist: {path}"
+            raise ParserError(msg)
+
+        if path.is_file() or entrypoint:
+            script_file = self._resolve_script_file(path, entrypoint)
+            tasks = self._parse_file_tasks_recursive(script_file)
+            metadata = WorkflowMetadata(name=script_file.stem)
+            return WorkflowBundle(metadata=metadata, tasks=tasks)
+
+        if path.is_dir():
+            # 1. Primary entrypoint: main.nf
+            main_file = path / "main.nf"
+            if main_file.is_file():
+                tasks = self._parse_file_tasks_recursive(main_file)
+                metadata = WorkflowMetadata(name=path.name)
+                return WorkflowBundle(metadata=metadata, tasks=tasks)
+
+            # 2. Directory scan fallback (with include graph traversal)
+            ignored_parts = {".git", ".nextflow", "work", "bin"}
+            nf_files = [
+                f
+                for f in sorted(path.rglob("*.nf"))
+                if not any(part in ignored_parts for part in f.parts)
+            ]
+            if not nf_files:
+                msg = f"No .nf workflow files found in directory: {path}"
+                raise ParserError(msg)
+
+            all_tasks: list[Task] = []
+            visited: set[Path] = set()
+            for f in nf_files:
+                if f.resolve() not in visited:
+                    try:
+                        file_tasks = self._parse_file_tasks_recursive(f, visited)
+                        all_tasks.extend(file_tasks)
+                    except (InvalidWorkflowError, ParserError):
+                        pass
+
+            if not all_tasks:
+                msg = f"No valid tasks parsed from .nf files in directory: {path}"
+                raise InvalidWorkflowError(msg)
+
+            metadata = WorkflowMetadata(name=path.name)
+            return WorkflowBundle(metadata=metadata, tasks=all_tasks)
+
+        msg = f"Unsupported path type: {path}"
+        raise ParserError(msg)

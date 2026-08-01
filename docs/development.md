@@ -131,6 +131,7 @@ Define `can_parse` to detect files using extensions or names:
 from pathlib import Path
 from workflow_clinic.parsers.base import BaseParser
 
+
 class MyLanguageParser(BaseParser):
     """Parser implementation for MyLanguage workflows."""
 
@@ -260,6 +261,7 @@ Every rule must define `id`, `name`, and `description` attributes:
 
 ```python
 from workflow_clinic.rules.base import BaseRule
+
 
 class MyCustomRule(BaseRule):
     """Flag workflows violating custom conditions (W003)."""
