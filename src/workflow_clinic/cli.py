@@ -22,6 +22,7 @@ from workflow_clinic.exceptions import (
     UnsupportedWorkflowError,
 )
 from workflow_clinic.parsers import ParserRegistry
+from workflow_clinic.reporting import compute_fingerprint
 from workflow_clinic.rules import RuleRunner, Severity
 
 logger = logging.getLogger(__name__)
@@ -93,7 +94,7 @@ _SEVERITY_COLORS: dict[Severity, str] = {
 
 
 @app.command()
-def examine(
+def examine(  # noqa: PLR0915
     path: Annotated[
         Path,
         typer.Argument(
@@ -162,12 +163,25 @@ def examine(
     runner = RuleRunner()
     findings = runner.run(bundle)
 
+    formatted_findings = []
+    for f in findings:
+        f_dict = f.model_dump()
+        fp = compute_fingerprint(
+            file_path=f.location or str(path),
+            rule_id=f.rule_id,
+            task_id=f.task_id,
+            target_token=f.message,
+        )
+        f_dict["fingerprint"] = fp.model_dump()
+        f_dict["id"] = fp.hash
+        formatted_findings.append(f_dict)
+
     # Export diagnosis.json (always generated per proposal spec)
     diagnosis_data = {
         "workflow_name": bundle.metadata.name,
         "tasks_count": len(bundle.tasks),
         "findings_count": len(findings),
-        "findings": [f.model_dump() for f in findings],
+        "findings": formatted_findings,
     }
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
