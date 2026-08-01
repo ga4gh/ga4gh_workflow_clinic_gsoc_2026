@@ -7,6 +7,7 @@ and CLI command routing.
 import json
 import logging
 import sys
+import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -24,6 +25,7 @@ from workflow_clinic.exceptions import (
 from workflow_clinic.parsers import ParserRegistry
 from workflow_clinic.reporting import compute_fingerprint
 from workflow_clinic.rules import RuleRunner, Severity
+from workflow_clinic.utils import clone_remote_repo, is_remote_url
 
 logger = logging.getLogger(__name__)
 
@@ -94,18 +96,13 @@ _SEVERITY_COLORS: dict[Severity, str] = {
 
 
 @app.command()
-def examine(  # noqa: PLR0915
-    path: Annotated[
-        Path,
+def examine(  # noqa: C901, PLR0912, PLR0915
+    target: Annotated[
+        str,
         typer.Argument(
-            exists=True,
-            file_okay=True,
-            dir_okay=True,
-            readable=True,
-            resolve_path=True,
-            help="Path to the workflow file or directory to examine.",
+            help="Path to local workflow file/directory or remote GitHub repository URL.",
         ),
-    ],
+    ] = ".",
     parser_type: Annotated[
         str | None,
         typer.Option(
@@ -124,35 +121,59 @@ def examine(  # noqa: PLR0915
     ] = Path("diagnosis.json"),
 ) -> None:
     """Examine a workflow for portability and cloud-readiness issues."""
-    # 1. Detect parser
-    if parser_type:
-        parser_name = parser_type
-    else:
-        try:
-            parser_name = ParserRegistry.detect_parser(path)
-        except UnsupportedWorkflowError as e:
-            err_console.print(f"[red]Error:[/red] {escape(str(e))}")
-            raise typer.Exit(code=1) from e
-
-    logger.info("Detected parser: %s", parser_name)
-
-    # 2. Parse workflow
-    console.print(f"\n[cyan]Scanning workflow at '{path.name}'...[/cyan]")
-    try:
-        parser = ParserRegistry.get_parser(parser_name)
-        bundle = parser.parse(path)
-    except (InvalidWorkflowError, ParserError) as e:
-        err_console.print(f"[red]Parse error:[/red] {escape(str(e))}")
-        is_missing_dependency = isinstance(e, ParserError) or isinstance(
-            e.__cause__, ModuleNotFoundError
+    temp_dir_obj = None
+    if is_remote_url(target):
+        console.print(
+            f"[cyan]Cloning remote repository at '{escape(target)}'...[/cyan]"
         )
-        if is_missing_dependency:
-            install_cmd = f"pip install 'workflow-clinic[{parser_name}]'"
+        temp_dir_obj = tempfile.TemporaryDirectory()
+        try:
+            scan_path = clone_remote_repo(target, Path(temp_dir_obj.name))
+        except ParserError as e:
+            err_console.print(f"[red]Remote clone error:[/red] {escape(str(e))}")
+            temp_dir_obj.cleanup()
+            raise typer.Exit(code=1) from e
+    else:
+        scan_path = Path(target).resolve()
+        if not scan_path.exists():
             err_console.print(
-                f"[bold]Tip:[/bold] Try installing with: "
-                f"[green]{escape(install_cmd)}[/green]"
+                f"[red]Error:[/red] Path '{escape(target)}' does not exist."
             )
-        raise typer.Exit(code=1) from e
+            raise typer.Exit(code=2)
+
+    try:
+        # 1. Detect parser
+        if parser_type:
+            parser_name = parser_type
+        else:
+            try:
+                parser_name = ParserRegistry.detect_parser(scan_path)
+            except UnsupportedWorkflowError as e:
+                err_console.print(f"[red]Error:[/red] {escape(str(e))}")
+                raise typer.Exit(code=1) from e
+
+        logger.info("Detected parser: %s", parser_name)
+
+        # 2. Parse workflow
+        console.print(f"\n[cyan]Scanning workflow at '{scan_path.name}'...[/cyan]")
+        try:
+            parser = ParserRegistry.get_parser(parser_name)
+            bundle = parser.parse(scan_path)
+        except (InvalidWorkflowError, ParserError) as e:
+            err_console.print(f"[red]Parse error:[/red] {escape(str(e))}")
+            is_missing_dependency = isinstance(e, ParserError) or isinstance(
+                e.__cause__, ModuleNotFoundError
+            )
+            if is_missing_dependency:
+                install_cmd = f"pip install 'workflow-clinic[{parser_name}]'"
+                err_console.print(
+                    f"[bold]Tip:[/bold] Try installing with: "
+                    f"[green]{escape(install_cmd)}[/green]"
+                )
+            raise typer.Exit(code=1) from e
+    finally:
+        if temp_dir_obj is not None:
+            temp_dir_obj.cleanup()
 
     logger.info(
         "Parsed workflow '%s' with %d task(s)",
@@ -167,7 +188,7 @@ def examine(  # noqa: PLR0915
     for f in findings:
         f_dict = f.model_dump()
         fp = compute_fingerprint(
-            file_path=f.location or str(path),
+            file_path=f.location or str(scan_path),
             rule_id=f.rule_id,
             task_id=f.task_id,
             target_token=f.message,
