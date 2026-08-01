@@ -1,6 +1,7 @@
 """Unit tests for the command-line interface (CLI) options."""
 
 import importlib.util
+import json
 import logging
 from pathlib import Path
 
@@ -56,18 +57,28 @@ def test_verbose_option() -> None:
 
 
 @pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
-def test_examine_clean_workflow() -> None:
+def test_examine_clean_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify examine CLI command on a clean workflow succeeds with exit code 0."""
+    monkeypatch.chdir(tmp_path)
     dummy_path = str(Path(__file__).parent / "fixtures" / "dummy.nf")
     result = runner.invoke(app, ["examine", dummy_path])
     assert result.exit_code == 0
     assert "No issues found" in result.output
     assert "clean and cloud-ready" in result.output
+    # diagnosis.json is always auto-generated
+    assert (tmp_path / "diagnosis.json").exists()
+    data = json.loads((tmp_path / "diagnosis.json").read_text())
+    assert data["findings_count"] == 0
 
 
 @pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
-def test_examine_poor_practices() -> None:
+def test_examine_poor_practices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify examine CLI command on a flawed workflow lists issues and exits with code 1."""
+    monkeypatch.chdir(tmp_path)
     poor_path = str(Path(__file__).parent / "fixtures" / "poor_practices.nf")
     result = runner.invoke(app, ["examine", poor_path])
     # Exits with 1 because there is at least one ERROR
@@ -81,6 +92,10 @@ def test_examine_poor_practices() -> None:
     assert "TAGLESS_IMAGE" in result.output
     assert "NO_RESOURCES" in result.output
     assert "Summary: 1 error(s), 4 warning(s), 1 info(s)" in result.output
+    # diagnosis.json is always auto-generated
+    assert (tmp_path / "diagnosis.json").exists()
+    data = json.loads((tmp_path / "diagnosis.json").read_text())
+    assert data["findings_count"] > 0
 
 
 def test_examine_unsupported_workflow() -> None:
@@ -119,3 +134,17 @@ def test_examine_explicit_type_bypass(monkeypatch) -> None:
     assert result.exit_code == 0
     assert not detect_called
     assert "No issues found" in result.output
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+def test_examine_output_json_export(tmp_path: Path) -> None:
+    """Verify examine CLI command exports diagnosis JSON file when -o/--output is provided."""
+    fixture_path = str(Path(__file__).parent / "fixtures" / "poor_practices.nf")
+    output_file = tmp_path / "diagnosis.json"
+
+    result = runner.invoke(app, ["examine", fixture_path, "-o", str(output_file)])
+    assert result.exit_code == 1
+    assert output_file.exists()
+    content = output_file.read_text()
+    assert "findings" in content
+    assert "poor_practices" in content
