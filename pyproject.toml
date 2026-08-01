@@ -87,7 +87,7 @@ ignore = [
 known-first-party = ["workflow_clinic"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "PLR2004", "SLF001"]  # asserts, magic values, and private member checks are standard in tests
+"tests/**" = ["S101", "S106", "PLR2004", "SLF001"]  # asserts, magic values, passwords, and private member checks are standard in tests
 
 # --- Mypy (Type Checker) ---
 [tool.mypy]

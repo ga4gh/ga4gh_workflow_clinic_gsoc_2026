@@ -168,8 +168,9 @@ def examine(  # noqa: PLR0915
         f_dict = f.model_dump()
         fp = compute_fingerprint(
             file_path=f.location or str(path),
-            line_number=None,
             rule_id=f.rule_id,
+            task_id=f.task_id,
+            target_token=f.message,
         )
         f_dict["fingerprint"] = fp.model_dump()
         f_dict["id"] = fp.hash
