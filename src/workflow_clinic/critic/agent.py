@@ -13,7 +13,10 @@ logger = logging.getLogger(__name__)
 try:
     import litellm
 except ImportError:  # pragma: no cover
-    litellm = None  # type: ignore[assignment]
+    from types import ModuleType
+
+    litellm = ModuleType("litellm")  # type: ignore[assignment]
+    litellm.completion = None  # type: ignore[attr-defined]
 
 
 class AICriticAgent:
@@ -132,7 +135,11 @@ Return ONLY valid JSON.
         kb_sections = self.knowledge_store.retrieve(finding.rule_id)
 
         # Check if LLM calls should be attempted
-        if not self.enable_llm or not litellm or not self._has_api_key():
+        if (
+            not self.enable_llm
+            or not getattr(litellm, "completion", None)
+            or not self._has_api_key()
+        ):
             logger.info(
                 "LLM API key not configured or disabled. Using TOML Knowledge Store fallback for rule %s",
                 finding.rule_id,

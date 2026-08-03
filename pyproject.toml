@@ -26,6 +26,7 @@ dependencies = [
     "typer[all]>=0.12",
     "pydantic>=2.0",
     "rich",
+    "litellm>=1.0.0",
 ]
 
 [project.optional-dependencies]
