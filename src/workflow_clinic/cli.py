@@ -122,26 +122,25 @@ def examine(  # noqa: C901, PLR0912, PLR0915
 ) -> None:
     """Examine a workflow for portability and cloud-readiness issues."""
     temp_dir_obj = None
-    if is_remote_url(target):
-        console.print(
-            f"[cyan]Cloning remote repository at '{escape(target)}'...[/cyan]"
-        )
-        temp_dir_obj = tempfile.TemporaryDirectory()
-        try:
-            scan_path = clone_remote_repo(target, Path(temp_dir_obj.name))
-        except ParserError as e:
-            err_console.print(f"[red]Remote clone error:[/red] {escape(str(e))}")
-            temp_dir_obj.cleanup()
-            raise typer.Exit(code=1) from e
-    else:
-        scan_path = Path(target).resolve()
-        if not scan_path.exists():
-            err_console.print(
-                f"[red]Error:[/red] Path '{escape(target)}' does not exist."
-            )
-            raise typer.Exit(code=2)
-
     try:
+        if is_remote_url(target):
+            console.print(
+                f"\n[cyan]Cloning remote repository from '{escape(target)}'...[/cyan]"
+            )
+            temp_dir_obj = tempfile.TemporaryDirectory()
+            try:
+                scan_path = clone_remote_repo(target, Path(temp_dir_obj.name))
+            except ParserError as e:
+                err_console.print(f"[red]Remote clone error:[/red] {escape(str(e))}")
+                raise typer.Exit(code=1) from e
+        else:
+            scan_path = Path(target).resolve()
+            if not scan_path.exists():
+                err_console.print(
+                    f"[red]Error:[/red] Path '{escape(target)}' does not exist."
+                )
+                raise typer.Exit(code=2)
+
         # 1. Detect parser
         if parser_type:
             parser_name = parser_type
@@ -171,89 +170,91 @@ def examine(  # noqa: C901, PLR0912, PLR0915
                     f"[green]{escape(install_cmd)}[/green]"
                 )
             raise typer.Exit(code=1) from e
+
+        logger.info(
+            "Parsed workflow '%s' with %d task(s)",
+            bundle.metadata.name,
+            len(bundle.tasks),
+        )
+
+        runner = RuleRunner()
+        findings = runner.run(bundle)
+
+        formatted_findings = []
+        for f in findings:
+            f_dict = f.model_dump()
+            fp = compute_fingerprint(
+                file_path=f.location or str(scan_path),
+                rule_id=f.rule_id,
+                task_id=f.task_id,
+                target_token=f.message,
+            )
+            f_dict["fingerprint"] = fp.model_dump()
+            f_dict["id"] = fp.hash
+            formatted_findings.append(f_dict)
+
+        # Export diagnosis.json (always generated per proposal spec)
+        diagnosis_data = {
+            "workflow_name": bundle.metadata.name,
+            "tasks_count": len(bundle.tasks),
+            "findings_count": len(findings),
+            "findings": formatted_findings,
+        }
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(
+                json.dumps(diagnosis_data, indent=2) + "\n", encoding="utf-8"
+            )
+            console.print(
+                f"[green]✓[/green] Saved diagnosis report to [bold]{escape(str(output))}[/bold]"
+            )
+        except OSError as e:
+            err_console.print(
+                f"[red]Error:[/red] Could not write diagnosis report to "
+                f"'{escape(str(output))}': {escape(str(e))}"
+            )
+            raise typer.Exit(code=1) from e
+
+        # 4. Display results
+        if not findings:
+            console.print(
+                "\n[bold green]✓[/bold green] No issues found — "
+                "workflow is clean and cloud-ready!\n"
+            )
+            raise typer.Exit(code=0)
+
+        table = Table(
+            title=f"Diagnostic Findings for '{bundle.metadata.name}'",
+            show_lines=True,
+        )
+        table.add_column("Severity", style="bold", width=10)
+        table.add_column("Rule", width=20)
+        table.add_column("Process", width=18)
+        table.add_column("Message")
+
+        for finding in findings:
+            color = _SEVERITY_COLORS.get(finding.severity, "white")
+            table.add_row(
+                f"[{color}]{finding.severity.value.upper()}[/{color}]",
+                finding.rule_id,
+                finding.location or "—",
+                finding.message,
+            )
+
+        console.print()
+        console.print(table)
+
+        # Summary line
+        n_err = sum(1 for f in findings if f.severity == Severity.ERROR)
+        n_warn = sum(1 for f in findings if f.severity == Severity.WARNING)
+        n_info = sum(1 for f in findings if f.severity == Severity.INFO)
+        console.print(
+            f"\n[bold]Summary:[/bold] {n_err} error(s), "
+            f"{n_warn} warning(s), {n_info} info(s)\n"
+        )
+
+        exit_code = 1 if n_err > 0 else 0
+        raise typer.Exit(code=exit_code)
     finally:
         if temp_dir_obj is not None:
             temp_dir_obj.cleanup()
-
-    logger.info(
-        "Parsed workflow '%s' with %d task(s)",
-        bundle.metadata.name,
-        len(bundle.tasks),
-    )
-
-    runner = RuleRunner()
-    findings = runner.run(bundle)
-
-    formatted_findings = []
-    for f in findings:
-        f_dict = f.model_dump()
-        fp = compute_fingerprint(
-            file_path=f.location or str(scan_path),
-            rule_id=f.rule_id,
-            task_id=f.task_id,
-            target_token=f.message,
-        )
-        f_dict["fingerprint"] = fp.model_dump()
-        f_dict["id"] = fp.hash
-        formatted_findings.append(f_dict)
-
-    # Export diagnosis.json (always generated per proposal spec)
-    diagnosis_data = {
-        "workflow_name": bundle.metadata.name,
-        "tasks_count": len(bundle.tasks),
-        "findings_count": len(findings),
-        "findings": formatted_findings,
-    }
-    try:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(diagnosis_data, indent=2) + "\n", encoding="utf-8")
-        console.print(
-            f"[green]✓[/green] Saved diagnosis report to [bold]{escape(str(output))}[/bold]"
-        )
-    except OSError as e:
-        err_console.print(
-            f"[red]Error:[/red] Could not write diagnosis report to "
-            f"'{escape(str(output))}': {escape(str(e))}"
-        )
-        raise typer.Exit(code=1) from e
-
-    # 4. Display results
-    if not findings:
-        console.print(
-            "\n[bold green]✓[/bold green] No issues found — "
-            "workflow is clean and cloud-ready!\n"
-        )
-        raise typer.Exit(code=0)
-
-    table = Table(
-        title=f"Diagnostic Findings for '{bundle.metadata.name}'",
-        show_lines=True,
-    )
-    table.add_column("Severity", style="bold", width=10)
-    table.add_column("Rule", width=20)
-    table.add_column("Process", width=18)
-    table.add_column("Message")
-
-    for finding in findings:
-        color = _SEVERITY_COLORS.get(finding.severity, "white")
-        table.add_row(
-            f"[{color}]{finding.severity.value.upper()}[/{color}]",
-            finding.rule_id,
-            finding.location or "—",
-            finding.message,
-        )
-
-    console.print()
-    console.print(table)
-
-    # Summary line
-    n_err = sum(1 for f in findings if f.severity == Severity.ERROR)
-    n_warn = sum(1 for f in findings if f.severity == Severity.WARNING)
-    n_info = sum(1 for f in findings if f.severity == Severity.INFO)
-    console.print(
-        f"\n[bold]Summary:[/bold] {n_err} error(s), "
-        f"{n_warn} warning(s), {n_info} info(s)\n"
-    )
-
-    exit_code = 1 if n_err > 0 else 0
-    raise typer.Exit(code=exit_code)

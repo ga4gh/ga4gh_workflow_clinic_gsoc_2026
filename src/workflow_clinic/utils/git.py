@@ -17,10 +17,21 @@ def is_remote_url(target: str) -> bool:
         True if target is a remote repository URL, False otherwise.
     """
     target_clean = target.strip()
+
+    # Standard remote URL schemes
     if target_clean.startswith(("http://", "https://", "git://", "git@")):
         return True
+
+    # If a local file or directory exists at this path, it is NOT a remote URL
+    if Path(target_clean).exists():
+        return False
+
+    # Check for .git suffix with URL-like patterns (e.g., contains :// or scp host:repo.git)
     if target_clean.endswith(".git"):
-        return True
+        if "://" in target_clean:
+            return True
+        if ":" in target_clean and "/" in target_clean and "\\" not in target_clean:
+            return True
 
     parsed = urlparse(target_clean)
     return bool(parsed.scheme in ("http", "https", "git") and parsed.netloc)
