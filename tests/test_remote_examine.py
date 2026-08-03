@@ -1,5 +1,6 @@
 """Unit tests for remote repository scanning in workflow-clinic examine CLI."""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -113,3 +114,49 @@ def test_examine_remote_repository_cli_flow(
     mock_clone.assert_called_once()
     mock_parser_inst.parse.assert_called_once()
     assert out_file.exists()
+
+
+@patch("workflow_clinic.cli.clone_remote_repo")
+@patch("workflow_clinic.cli.ParserRegistry.detect_parser")
+@patch("workflow_clinic.cli.ParserRegistry.get_parser")
+def test_remote_examine_stable_fingerprint_across_runs(
+    mock_get_parser: MagicMock,
+    mock_detect_parser: MagicMock,
+    mock_clone: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Verify scanning the same remote URL produces identical fingerprint hashes across different temp directory paths."""
+    mock_bundle = MagicMock()
+    mock_bundle.metadata.name = "Remote Workflow"
+    mock_task = MagicMock()
+    mock_task.id = "FASTQC"
+    mock_task.name = "FASTQC"
+    mock_task.command = None
+    mock_bundle.tasks = [mock_task]
+
+    mock_parser_inst = MagicMock()
+    mock_parser_inst.parse.return_value = mock_bundle
+    mock_get_parser.return_value = mock_parser_inst
+    mock_detect_parser.return_value = "nextflow"
+
+    dir1 = tmp_path / "temp_run_1"
+    dir2 = tmp_path / "temp_run_2"
+    dir1.mkdir()
+    dir2.mkdir()
+
+    mock_clone.side_effect = [dir1, dir2]
+
+    out_file1 = tmp_path / "diag1.json"
+    out_file2 = tmp_path / "diag2.json"
+    remote_url = "https://github.com/ga4gh/sample-workflow"
+
+    res1 = runner.invoke(app, ["examine", remote_url, "-o", str(out_file1)])
+    res2 = runner.invoke(app, ["examine", remote_url, "-o", str(out_file2)])
+
+    assert res1.exit_code == 0
+    assert res2.exit_code == 0
+
+    report1 = json.loads(out_file1.read_text(encoding="utf-8"))
+    report2 = json.loads(out_file2.read_text(encoding="utf-8"))
+
+    assert report1["findings"] == report2["findings"]

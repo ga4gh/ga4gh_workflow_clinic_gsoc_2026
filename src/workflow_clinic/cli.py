@@ -184,7 +184,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         for f in findings:
             f_dict = f.model_dump()
             fp = compute_fingerprint(
-                file_path=f.location or str(scan_path),
+                file_path=f.location or target,
                 rule_id=f.rule_id,
                 task_id=f.task_id,
                 target_token=f.message,
