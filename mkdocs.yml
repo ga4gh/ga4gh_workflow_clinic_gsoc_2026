@@ -66,6 +66,7 @@ plugins:
 
 nav:
   - Home: index.md
+  - AI Critic: ai_critic.md
   - Architecture: architecture/architecture.md
   - Development Guide: development.md
   - API Reference: api.md
