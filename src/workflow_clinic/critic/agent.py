@@ -106,7 +106,7 @@ FINDING DETAILS:
 - Category: {finding.category}
 - Severity: {finding.severity}
 - File Path: {finding.file_path}
-- Line Number: {finding.line_number or "N/A"}
+- Line Number: {finding.line_number if finding.line_number is not None else "N/A"}
 
 KNOWLEDGE STORE RECOMMENDATIONS:
 {context_block}
@@ -158,7 +158,10 @@ Return ONLY valid JSON.
                 kwargs["api_key"] = self.api_key
 
             response = litellm.completion(**kwargs)
-            content = response.choices[0].message.content.strip()
+            if isinstance(response, dict):
+                content = response["choices"][0]["message"]["content"].strip()
+            else:
+                content = response.choices[0].message.content.strip()
 
             # Clean JSON markdown code blocks if present
             if content.startswith("```"):

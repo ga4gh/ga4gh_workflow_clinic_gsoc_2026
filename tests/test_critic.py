@@ -12,7 +12,14 @@ from workflow_clinic.models.diagnosis import DiagnosisReport, Finding, Remediati
 def test_ai_critic_fallback_without_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify AICriticAgent defaults to Knowledge Store fallback when no LLM API keys are set."""
     # Ensure all LLM API environment variables are cleared
-    for key in ["GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]:
+    for key in [
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MISTRAL_API_KEY",
+        "COHERE_API_KEY",
+        "GROQ_API_KEY",
+    ]:
         monkeypatch.delenv(key, raising=False)
 
     agent = AICriticAgent(enable_llm=True)
