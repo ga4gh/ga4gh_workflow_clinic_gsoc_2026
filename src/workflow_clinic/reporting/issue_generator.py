@@ -25,6 +25,7 @@ _RULE_CATEGORIES: dict[str, str] = {
 FINGERPRINT_REGEX = re.compile(
     r"<!--\s*workflow-clinic:fingerprint:([a-f0-9]{64})\s*-->", re.IGNORECASE
 )
+SHA256_HEX_REGEX = re.compile(r"^[a-f0-9]{64}$", re.IGNORECASE)
 
 # Severity ordering to compute highest severity in grouped issues
 _SEVERITY_ORDER: dict[str, int] = {
@@ -65,6 +66,19 @@ def extract_fingerprints(markdown_text: str) -> set[str]:
     }
 
 
+def _get_valid_fingerprint(f: Finding) -> str | None:
+    """Extract a valid 64-hex SHA-256 fingerprint from finding.fingerprint.hash or finding.id."""
+    candidate = ""
+    if f.fingerprint and f.fingerprint.hash:
+        candidate = f.fingerprint.hash.lower().strip()
+    elif f.id:
+        candidate = f.id.lower().strip()
+
+    if candidate and SHA256_HEX_REGEX.match(candidate):
+        return candidate
+    return None
+
+
 def filter_new_findings(
     findings: list[Finding], existing_fingerprints: set[str] | None = None
 ) -> list[Finding]:
@@ -83,16 +97,15 @@ def filter_new_findings(
     if not existing_fingerprints:
         return list(findings)
 
-    clean_existing = {fp.lower().strip() for fp in existing_fingerprints if fp}
+    clean_existing = {
+        fp.lower().strip()
+        for fp in existing_fingerprints
+        if fp and SHA256_HEX_REGEX.match(fp.strip())
+    }
     new_findings: list[Finding] = []
 
     for f in findings:
-        fp_hash = ""
-        if f.fingerprint and f.fingerprint.hash:
-            fp_hash = f.fingerprint.hash.lower().strip()
-        elif f.id:
-            fp_hash = f.id.lower().strip()
-
+        fp_hash = _get_valid_fingerprint(f)
         if not fp_hash or fp_hash not in clean_existing:
             new_findings.append(f)
 
@@ -129,12 +142,7 @@ def _build_category_issue_body(
     ]
 
     for idx, f in enumerate(cat_findings, 1):
-        fp_hash = ""
-        if f.fingerprint and f.fingerprint.hash:
-            fp_hash = f.fingerprint.hash
-        elif f.id:
-            fp_hash = f.id
-
+        fp_hash = _get_valid_fingerprint(f)
         if fp_hash:
             fps.append(fp_hash)
 
@@ -165,9 +173,10 @@ def _build_category_issue_body(
             if f.remediation.summary:
                 body_lines.append(f"- **Remediation**: {f.remediation.summary}")
             if f.remediation.code_example:
-                body_lines.append("\n```groovy")
+                body_lines.append("")
+                body_lines.append("```groovy")
                 body_lines.append(f.remediation.code_example)
-                body_lines.append("```\n")
+                body_lines.append("```")
 
         if fp_hash:
             body_lines.append(f"<!-- workflow-clinic:fingerprint:{fp_hash} -->")

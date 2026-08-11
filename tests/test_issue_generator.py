@@ -31,41 +31,39 @@ def test_extract_fingerprints_regex() -> None:
 
 def test_mixed_scenario_finding_level_deduplication() -> None:
     """Verify deduplication filters findings before grouping, preventing partial duplicate issues."""
+    f1_hash = "1111111111111111111111111111111111111111111111111111111111111111"
+    f2_hash = "2222222222222222222222222222222222222222222222222222222222222222"
+    f3_hash = "3333333333333333333333333333333333333333333333333333333333333333"
+
     f1 = Finding(
-        id="hash_1111111111111111111111111111111111111111111111111111111111111111",
+        id=f1_hash,
         rule_id="W001",
         severity="CRITICAL",
         category="containerization",
         title="Unpinned container in Task A",
         file_path="main.nf",
         line_number=10,
-        fingerprint=Fingerprint(
-            hash="hash_1111111111111111111111111111111111111111111111111111111111111111"
-        ),
+        fingerprint=Fingerprint(hash=f1_hash),
     )
     f2 = Finding(
-        id="hash_2222222222222222222222222222222222222222222222222222222222222222",
+        id=f2_hash,
         rule_id="W001",
         severity="MEDIUM",
         category="containerization",
         title="Unpinned container in Task B",
         file_path="main.nf",
         line_number=25,
-        fingerprint=Fingerprint(
-            hash="hash_2222222222222222222222222222222222222222222222222222222222222222"
-        ),
+        fingerprint=Fingerprint(hash=f2_hash),
     )
     f3_new = Finding(
-        id="hash_3333333333333333333333333333333333333333333333333333333333333333",
+        id=f3_hash,
         rule_id="W001",
         severity="CRITICAL",
         category="containerization",
         title="Unpinned container in Task C",
         file_path="main.nf",
         line_number=40,
-        fingerprint=Fingerprint(
-            hash="hash_3333333333333333333333333333333333333333333333333333333333333333"
-        ),
+        fingerprint=Fingerprint(hash=f3_hash),
     )
 
     report = DiagnosisReport(
@@ -76,19 +74,14 @@ def test_mixed_scenario_finding_level_deduplication() -> None:
     )
 
     # f1 and f2 are already tracked; only f3_new is untracked
-    existing = {
-        "hash_1111111111111111111111111111111111111111111111111111111111111111",
-        "hash_2222222222222222222222222222222222222222222222222222222222222222",
-    }
+    existing = {f1_hash, f2_hash}
 
     issues = generate_issues(report, existing_fingerprints=existing)
 
     assert len(issues) == 1
     issue = issues[0]
     assert issue.category == "containerization"
-    assert issue.fingerprints == [
-        "hash_3333333333333333333333333333333333333333333333333333333333333333"
-    ]
+    assert issue.fingerprints == [f3_hash]
     assert "Task C" in issue.body
     assert "Task A" not in issue.body
     assert "Task B" not in issue.body
@@ -96,21 +89,26 @@ def test_mixed_scenario_finding_level_deduplication() -> None:
 
 def test_category_grouping_and_severity() -> None:
     """Verify findings are grouped by category domain with correct title and severity."""
+    f1_hash = "a000000000000000000000000000000000000000000000000000000000000001"
+    f2_hash = "b000000000000000000000000000000000000000000000000000000000000002"
+
     f1 = Finding(
-        id="fp_w001",
+        id=f1_hash,
         rule_id="W001",
         severity="MEDIUM",
         category="containerization",
         title="Unpinned tag",
         file_path="main.nf",
+        fingerprint=Fingerprint(hash=f1_hash),
     )
     f2 = Finding(
-        id="fp_w002",
+        id=f2_hash,
         rule_id="W002",
         severity="CRITICAL",
         category="resources",
         title="Missing CPU limit",
         file_path="main.nf",
+        fingerprint=Fingerprint(hash=f2_hash),
         remediation=Remediation(
             summary="Add cpus 2 directive",
             explanation="Cloud runners require resource bounds",
