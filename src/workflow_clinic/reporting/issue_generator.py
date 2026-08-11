@@ -140,8 +140,8 @@ def _build_category_issue_body(
 
         loc = (
             f.file_path
-            if hasattr(f, "file_path") and f.file_path
-            else (f.location or "global")
+            if getattr(f, "file_path", None)
+            else (getattr(f, "location", None) or "global")
         )
         line_str = (
             f" (Line {f.line_number})"
@@ -149,19 +149,24 @@ def _build_category_issue_body(
             else ""
         )
 
-        title_str = f.title if hasattr(f, "title") and f.title else f.message
+        title_str = (
+            f.title
+            if getattr(f, "title", None)
+            else (getattr(f, "message", None) or f.rule_id)
+        )
+        details_str = getattr(f, "message", None) or getattr(f, "title", "")
+
         body_lines.append(f"### {idx}. [{f.rule_id}] {title_str}")
         body_lines.append(f"- **Location**: `{loc}`{line_str}")
-        if hasattr(f, "message") and f.message:
-            body_lines.append(f"- **Details**: {f.message}")
+        if details_str:
+            body_lines.append(f"- **Details**: {details_str}")
 
-        if getattr(f, "remediation", None):
-            rem = f.remediation
-            if hasattr(rem, "summary") and rem.summary:
-                body_lines.append(f"- **Remediation**: {rem.summary}")
-            if hasattr(rem, "code_example") and rem.code_example:
+        if f.remediation is not None:
+            if f.remediation.summary:
+                body_lines.append(f"- **Remediation**: {f.remediation.summary}")
+            if f.remediation.code_example:
                 body_lines.append("\n```groovy")
-                body_lines.append(rem.code_example)
+                body_lines.append(f.remediation.code_example)
                 body_lines.append("```\n")
 
         if fp_hash:
