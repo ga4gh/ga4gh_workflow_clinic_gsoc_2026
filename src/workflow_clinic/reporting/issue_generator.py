@@ -6,12 +6,15 @@ hidden SHA-256 fingerprint comments for issue deduplication.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from workflow_clinic.models.diagnosis import DiagnosisReport, Finding
+
+logger = logging.getLogger(__name__)
 
 # Explicit mapping of rule IDs to issue category domains
 _RULE_CATEGORIES: dict[str, str] = {
@@ -67,16 +70,51 @@ def extract_fingerprints(markdown_text: str) -> set[str]:
 
 
 def _get_valid_fingerprint(f: Finding) -> str | None:
-    """Extract a valid 64-hex SHA-256 fingerprint from finding.fingerprint.hash or finding.id."""
+    """Extract a valid 64-hex SHA-256 fingerprint from finding.fingerprint.hash or finding.id.
+
+    Logs a warning if candidate is missing or does not match SHA-256 hex format.
+    """
     candidate = ""
     if f.fingerprint and f.fingerprint.hash:
         candidate = f.fingerprint.hash.lower().strip()
     elif f.id:
         candidate = f.id.lower().strip()
 
-    if candidate and SHA256_HEX_REGEX.match(candidate):
-        return candidate
-    return None
+    if not candidate:
+        logger.warning(
+            "Finding '%s' (rule %s) lacks a fingerprint hash. Deduplication tracking is disabled for this finding.",
+            getattr(f, "id", None) or getattr(f, "title", "unnamed"),
+            getattr(f, "rule_id", "unknown"),
+        )
+        return None
+
+    if not SHA256_HEX_REGEX.match(candidate):
+        logger.warning(
+            "Finding '%s' (rule %s) contains invalid non-SHA256 fingerprint hash '%s'. Skipping deduplication hash for this finding.",
+            getattr(f, "id", None) or getattr(f, "title", "unnamed"),
+            getattr(f, "rule_id", "unknown"),
+            candidate,
+        )
+        return None
+
+    return candidate
+
+
+def _detect_code_language(file_path: str | None, default_lang: str = "groovy") -> str:
+    """Infer markdown code block syntax highlighting language from file extension."""
+    if not file_path:
+        return default_lang
+
+    path_str = file_path.lower()
+    if path_str.endswith(".wdl"):
+        return "wdl"
+    if path_str.endswith((".cwl", ".yaml", ".yml")):
+        return "yaml"
+    if path_str.endswith((".smk", "snakefile")):
+        return "python"
+    if path_str.endswith((".nf", ".config", ".groovy")):
+        return "groovy"
+    return default_lang
 
 
 def filter_new_findings(
@@ -97,11 +135,19 @@ def filter_new_findings(
     if not existing_fingerprints:
         return list(findings)
 
-    clean_existing = {
-        fp.lower().strip()
-        for fp in existing_fingerprints
-        if fp and SHA256_HEX_REGEX.match(fp.strip())
-    }
+    clean_existing: set[str] = set()
+    for fp in existing_fingerprints:
+        if not fp:
+            continue
+        cleaned = fp.lower().strip()
+        if SHA256_HEX_REGEX.match(cleaned):
+            clean_existing.add(cleaned)
+        else:
+            logger.warning(
+                "Ignoring invalid non-SHA256 existing fingerprint hash: '%s'",
+                fp,
+            )
+
     new_findings: list[Finding] = []
 
     for f in findings:
@@ -128,7 +174,11 @@ def _determine_highest_severity(findings: list[Finding]) -> str:
 
 
 def _build_category_issue_body(
-    cat_title_str: str, cat: str, highest_severity: str, cat_findings: list[Finding]
+    cat_title_str: str,
+    cat: str,
+    highest_severity: str,
+    cat_findings: list[Finding],
+    default_lang: str = "groovy",
 ) -> tuple[str, list[str]]:
     """Build issue Markdown body text and list of embedded fingerprint hashes."""
     fps: list[str] = []
@@ -173,8 +223,11 @@ def _build_category_issue_body(
             if f.remediation.summary:
                 body_lines.append(f"- **Remediation**: {f.remediation.summary}")
             if f.remediation.code_example:
+                lang = _detect_code_language(
+                    getattr(f, "file_path", None), default_lang=default_lang
+                )
                 body_lines.append("")
-                body_lines.append("```groovy")
+                body_lines.append(f"```{lang}")
                 body_lines.append(f.remediation.code_example)
                 body_lines.append("```")
 
@@ -190,11 +243,14 @@ def _build_category_issue_body(
     return "\n".join(body_lines), fps
 
 
-def group_findings(findings: list[Finding]) -> list[GeneratedIssue]:
+def group_findings(
+    findings: list[Finding], default_lang: str = "groovy"
+) -> list[GeneratedIssue]:
     """Group a list of findings by rule category domain into GeneratedIssue objects.
 
     Args:
         findings: List of diagnostic findings to group
+        default_lang: Default code block syntax language if un-inferable
 
     Returns:
         List of GeneratedIssue objects formatted with GitHub Flavored Markdown.
@@ -219,7 +275,11 @@ def group_findings(findings: list[Finding]) -> list[GeneratedIssue]:
 
         title = f"[{highest_severity}] {cat_title_str} Issues ({count} location{'s' if count > 1 else ''})"
         body, fps = _build_category_issue_body(
-            cat_title_str, cat, highest_severity, cat_findings
+            cat_title_str,
+            cat,
+            highest_severity,
+            cat_findings,
+            default_lang=default_lang,
         )
 
         issues.append(
@@ -236,16 +296,19 @@ def group_findings(findings: list[Finding]) -> list[GeneratedIssue]:
 
 
 def generate_issues(
-    report: DiagnosisReport, existing_fingerprints: set[str] | None = None
+    report: DiagnosisReport,
+    existing_fingerprints: set[str] | None = None,
+    default_lang: str = "groovy",
 ) -> list[GeneratedIssue]:
     """Generate deduplicated issue payloads directly from a DiagnosisReport instance.
 
     Args:
         report: DiagnosisReport object containing findings
         existing_fingerprints: Optional set of already tracked fingerprint hashes
+        default_lang: Default code block syntax language if un-inferable
 
     Returns:
         List of GeneratedIssue objects ready for issue export.
     """
     new_findings = filter_new_findings(report.findings, existing_fingerprints)
-    return group_findings(new_findings)
+    return group_findings(new_findings, default_lang=default_lang)

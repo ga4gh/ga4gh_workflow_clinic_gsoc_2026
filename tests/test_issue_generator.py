@@ -137,3 +137,59 @@ def test_empty_report_handling() -> None:
     assert generate_issues(report) == []
     assert filter_new_findings([]) == []
     assert group_findings([]) == []
+
+
+def test_invalid_fingerprint_warning_logging(caplog) -> None:
+    """Verify warning log is emitted when finding has invalid or missing SHA-256 fingerprint."""
+    f_invalid = Finding(
+        id="non_hex_id",
+        rule_id="W001",
+        severity="HIGH",
+        category="containerization",
+        title="Invalid hash finding",
+        file_path="workflow.wdl",
+    )
+
+    with caplog.at_level("WARNING"):
+        issues = group_findings([f_invalid])
+
+    assert len(issues) == 1
+    assert "contains invalid non-SHA256 fingerprint hash" in caplog.text
+
+
+def test_parameterized_code_language_detection() -> None:
+    """Verify code block syntax highlighting infers language from file extensions."""
+    f_wdl = Finding(
+        id="1111111111111111111111111111111111111111111111111111111111111111",
+        rule_id="W002",
+        severity="HIGH",
+        category="resources",
+        title="Missing runtime memory",
+        file_path="task.wdl",
+        remediation=Remediation(
+            summary="Add memory directive",
+            explanation="Cloud runners require memory bounds",
+            code_example="runtime { memory: '4 GB' }",
+        ),
+    )
+
+    f_cwl = Finding(
+        id="2222222222222222222222222222222222222222222222222222222222222222",
+        rule_id="W002",
+        severity="MEDIUM",
+        category="resources",
+        title="Missing CWL requirement",
+        file_path="tool.cwl",
+        remediation=Remediation(
+            summary="Add ResourceRequirement",
+            explanation="Cloud runners require memory bounds",
+            code_example="ResourceRequirement: ramMin: 4096",
+        ),
+    )
+
+    issues = group_findings([f_wdl, f_cwl])
+    wdl_body = next(iss.body for iss in issues if "task.wdl" in iss.body)
+    cwl_body = next(iss.body for iss in issues if "tool.cwl" in iss.body)
+
+    assert "```wdl\nruntime { memory: '4 GB' }\n```" in wdl_body
+    assert "```yaml\nResourceRequirement: ramMin: 4096\n```" in cwl_body
