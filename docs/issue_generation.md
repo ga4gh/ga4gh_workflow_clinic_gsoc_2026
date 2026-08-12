@@ -1,6 +1,7 @@
 # Diagnostic Issue Generation & Interactive CLI Selection
 
-The `workflow-clinic create-issue` command reads diagnostic findings from `diagnosis.json`, groups them by category domain (`containerization`, `resources`, `portability`, `security`), and provides an interactive selection menu before publishing to GitHub or exporting locally.
+The `workflow-clinic create-issue` command reads diagnostic findings from `diagnosis.json`, groups them by category domain (`containerization`, `resources`, `portability`, `security`), and provides an interactive selection menu before exporting to a local Markdown file (or publishing to GitHub).
+
 
 ---
 
