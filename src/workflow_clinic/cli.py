@@ -13,6 +13,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.markup import escape
 from rich.table import Table
 
@@ -22,8 +23,9 @@ from workflow_clinic.exceptions import (
     ParserError,
     UnsupportedWorkflowError,
 )
+from workflow_clinic.models.diagnosis import DiagnosisReport
 from workflow_clinic.parsers import ParserRegistry
-from workflow_clinic.reporting import compute_fingerprint
+from workflow_clinic.reporting import compute_fingerprint, generate_issues
 from workflow_clinic.rules import RuleRunner, Severity
 from workflow_clinic.utils import clone_remote_repo, is_remote_url
 
@@ -258,3 +260,178 @@ def examine(  # noqa: C901, PLR0912, PLR0915
     finally:
         if temp_dir_obj is not None:
             temp_dir_obj.cleanup()
+
+
+def parse_selection(raw: str, max_index: int) -> list[int]:
+    """Parse interactive selection string into 0-indexed integer list.
+
+    Supports comma lists ("1, 3"), ranges ("1-3"), "all", and default empty.
+    Ignores out-of-bounds indices.
+    """
+
+    clean = raw.strip().lower()
+    if not clean or clean in ("all", "a"):
+        return list(range(max_index))
+
+    indices: list[int] = []
+    for item in clean.split(","):
+        part = item.strip()
+        if not part:
+            continue
+        if "-" in part:
+            try:
+                start_str, end_str = part.split("-", maxsplit=1)
+                start = int(start_str.strip())
+                end = int(end_str.strip())
+                for i in range(start, end + 1):
+                    idx = i - 1
+                    if 0 <= idx < max_index and idx not in indices:
+                        indices.append(idx)
+            except ValueError:
+                continue
+        else:
+            try:
+                val = int(part)
+                idx = val - 1
+                if 0 <= idx < max_index and idx not in indices:
+                    indices.append(idx)
+            except ValueError:
+                continue
+
+    return indices
+
+
+@app.command(name="create-issue")
+def create_issue(  # noqa: C901, PLR0915
+    target: Annotated[
+        str,
+        typer.Argument(
+            help="Path to local workflow directory or diagnosis.json file.",
+        ),
+    ] = ".",
+    all_issues: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--all",
+            "-y",
+            help="Select all findings without interactive prompt.",
+        ),
+    ] = False,
+    dry_run: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print generated issue Markdown to stdout without saving to disk.",
+        ),
+    ] = False,
+    preview: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--preview",
+            help="Render a Markdown preview in terminal before writing to disk.",
+        ),
+    ] = False,
+    output: Annotated[
+        Path,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output Markdown file path (default: issue.md).",
+        ),
+    ] = Path("issue.md"),
+) -> None:
+    """Export grouped findings from diagnosis.json into GitHub issue markdown format."""
+    target_path = Path(target).resolve()
+    diag_path = target_path if target_path.is_file() else target_path / "diagnosis.json"
+
+    if not diag_path.exists():
+        err_console.print(
+            f"[red]Error:[/red] Could not find '[bold]{diag_path.name}[/bold]' at '{escape(str(diag_path.parent))}'."
+        )
+        err_console.print(
+            f"[bold]Tip:[/bold] Run [green]workflow-clinic examine {escape(target)}[/green] first to generate diagnostic findings."
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        raw_json = json.loads(diag_path.read_text(encoding="utf-8"))
+        report = DiagnosisReport.model_validate(raw_json)
+    except Exception as e:
+        err_console.print(
+            f"[red]Error:[/red] Failed to parse diagnosis report '{escape(str(diag_path))}': {escape(str(e))}"
+        )
+        raise typer.Exit(code=1) from e
+
+    generated_issues = generate_issues(report)
+    if not generated_issues:
+        console.print(
+            "\n[bold green]✓[/bold green] No actionable findings to report!\n"
+        )
+        raise typer.Exit(code=0)
+
+    # Render interactive selection table
+    table = Table(
+        title=f"Diagnostic Issue Groups for '{report.workflow_name}'",
+        show_lines=True,
+    )
+    table.add_column("Option", style="bold cyan", width=8)
+    table.add_column("Severity", style="bold", width=10)
+    table.add_column("Category", width=20)
+    table.add_column("Locations")
+
+    for idx, iss in enumerate(generated_issues, 1):
+        sev_color = "red" if iss.severity in ("CRITICAL", "HIGH", "ERROR") else "yellow"
+        table.add_row(
+            f"[{idx}]",
+            f"[{sev_color}]{iss.severity}[/{sev_color}]",
+            iss.category.replace("_", " ").title(),
+            f"{len(iss.fingerprints)} location(s)",
+        )
+
+    console.print()
+    console.print(table)
+
+    # Determine selected indices
+    is_tty = sys.stdin.isatty()
+    if all_issues or not is_tty:
+        if not is_tty and not all_issues:
+            console.print(
+                "[yellow]Non-interactive terminal detected — auto-selecting all findings.[/yellow]"
+            )
+        selected_indices = list(range(len(generated_issues)))
+    else:
+        prompt_msg = (
+            f"Select issues to publish (e.g. 1,{len(generated_issues)} or all) [all]"
+        )
+        raw_input_str = typer.prompt(prompt_msg, default="all")
+        selected_indices = parse_selection(raw_input_str, len(generated_issues))
+        if not selected_indices:
+            err_console.print("[yellow]No valid issues selected. Exiting.[/yellow]")
+            raise typer.Exit(code=0)
+
+    selected_issues = [generated_issues[i] for i in selected_indices]
+    combined_markdown = "\n\n---\n\n".join(iss.body for iss in selected_issues)
+
+    if dry_run:
+        console.print("\n[cyan]--- Issue Markdown Payload (Dry Run) ---[/cyan]\n")
+        console.print(combined_markdown)
+        console.print()
+        raise typer.Exit(code=0)
+
+    if preview:
+        console.print("\n[cyan]--- Issue Markdown Preview ---[/cyan]\n")
+        console.print(Markdown(combined_markdown))
+        console.print()
+
+    # Export to output file
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(combined_markdown + "\n", encoding="utf-8")
+        console.print(
+            f"\n[bold green]✓[/bold green] Exported {len(selected_issues)} issue group(s) to [bold]{escape(str(output))}[/bold]\n"
+        )
+    except OSError as e:
+        err_console.print(
+            f"[red]Error:[/red] Could not write issue file to '{escape(str(output))}': {escape(str(e))}"
+        )
+        raise typer.Exit(code=1) from e
