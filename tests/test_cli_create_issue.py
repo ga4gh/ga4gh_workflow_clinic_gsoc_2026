@@ -1,13 +1,19 @@
-"""Unit tests for create-issue CLI command and selection parser."""
-
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from workflow_clinic.cli import app, parse_selection
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _clear_github_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure GitHub credentials from CI environment do not interfere with local export CLI tests."""
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
 
 
 def test_parse_selection_utility() -> None:
