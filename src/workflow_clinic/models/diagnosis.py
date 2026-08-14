@@ -1,8 +1,8 @@
 """Pydantic data models for diagnosis reports, findings, and remediations."""
 
-from typing import Literal
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Fingerprint(BaseModel):
@@ -28,18 +28,27 @@ class Remediation(BaseModel):
 class Finding(BaseModel):
     """Formal model representing a single workflow diagnostic finding."""
 
-    id: str = Field(..., description="Unique finding ID or SHA-256 fingerprint hash")
+    id: str = Field(
+        default="", description="Unique finding ID or SHA-256 fingerprint hash"
+    )
     rule_id: str = Field(..., description="Rule identifier (e.g. W001, W002)")
-    severity: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"] = Field(
-        ..., description="Severity level of the finding"
-    )
+    severity: str = Field(..., description="Severity level of the finding")
     category: str = Field(
-        ..., description="Finding category (e.g. containerization, resources, security)"
+        default="",
+        description="Finding category (e.g. containerization, resources, security)",
     )
-    title: str = Field(..., description="Short title describing the issue")
-    file_path: str = Field(..., description="Relative or absolute path to target file")
+    title: str = Field(default="", description="Short title describing the issue")
+    file_path: str = Field(
+        default="", description="Relative or absolute path to target file"
+    )
     line_number: int | None = Field(
         default=None, description="Optional line number where issue was detected"
+    )
+    location: str | None = Field(
+        default=None, description="Optional location hint from examine output"
+    )
+    message: str | None = Field(
+        default=None, description="Human-readable description of the issue"
     )
     fingerprint: Fingerprint | None = Field(
         default=None, description="Optional SHA-256 fingerprint container"
@@ -47,6 +56,57 @@ class Finding(BaseModel):
     remediation: Remediation | None = Field(
         default=None, description="Optional remediation guidance"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Normalize severity to upper-case string
+            if "severity" in data and isinstance(data["severity"], str):
+                sev = data["severity"].upper()
+                valid_severities = {
+                    "CRITICAL",
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW",
+                    "ERROR",
+                    "WARNING",
+                    "INFO",
+                }
+                if sev not in valid_severities:
+                    msg = f"Invalid severity level: {data['severity']}"
+                    raise ValueError(msg)
+                data["severity"] = sev
+
+            # Normalize location to file_path
+            if not data.get("file_path"):
+                data["file_path"] = data.get("location") or "main.nf"
+
+            # Normalize message to title
+            if not data.get("title"):
+                data["title"] = (
+                    data.get("message") or data.get("rule_id") or "Diagnostic Finding"
+                )
+
+            # Map category from rule_id if omitted
+            if not data.get("category") and data.get("rule_id"):
+                rule_map = {
+                    "W001": "containerization",
+                    "W002": "resources",
+                    "W003": "portability",
+                    "W004": "security",
+                }
+                data["category"] = rule_map.get(str(data["rule_id"]), "portability")
+
+            # Extract id from fingerprint if omitted
+            if not data.get("id"):
+                fp = data.get("fingerprint")
+                if isinstance(fp, dict) and fp.get("hash"):
+                    data["id"] = fp["hash"]
+                else:
+                    data["id"] = "finding_hash"
+
+        return data
 
 
 class DiagnosisReport(BaseModel):
