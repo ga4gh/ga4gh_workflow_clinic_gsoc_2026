@@ -24,8 +24,8 @@ from workflow_clinic.reporting import (
     GitHubPublisher,
     GitHubRepoNotFoundError,
     PublishedIssueInfo,
-    _mask_token,
 )
+from workflow_clinic.reporting.github_publisher import _mask_token
 
 runner = CliRunner()
 
@@ -181,6 +181,9 @@ def test_github_publisher_fetch_active_fingerprints(
     assert len(fps) == 2
     assert "a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890" in fps
     assert "11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff" in fps
+    mock_repo.get_issues.assert_called_once_with(
+        state="open", labels=["workflow-clinic"]
+    )
 
 
 @patch("workflow_clinic.reporting.github_publisher.Github")

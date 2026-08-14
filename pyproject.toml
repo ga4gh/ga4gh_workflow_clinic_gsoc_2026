@@ -83,8 +83,6 @@ ignore = [
     "ISC001",  # implicit string concatenation (conflicts with formatter)
     "E501",    # line too long (handled by formatter)
     "CPY",     # flake8-copyright (copyright notice checks)
-    "PLR0913", # too many arguments (standard in Typer CLI commands)
-    "PLR0917", # too many positional arguments (standard in Typer CLI commands)
 ]
 
 [tool.ruff.lint.isort]
@@ -92,6 +90,7 @@ known-first-party = ["workflow_clinic"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S106", "PLR2004", "SLF001"]  # asserts, magic values, passwords, and private member checks are standard in tests
+"src/workflow_clinic/cli.py" = ["PLR0913", "PLR0917"]  # Typer CLI commands accept multiple options/arguments as function parameters
 
 # --- Mypy (Type Checker) ---
 [tool.mypy]

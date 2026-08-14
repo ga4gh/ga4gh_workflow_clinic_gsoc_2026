@@ -54,7 +54,7 @@ def test_create_issue_empty_report(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["create-issue", str(tmp_path)])
     assert result.exit_code == 0
-    assert "actionable findings to report!" in result.output
+    assert "No new actionable findings to report!" in result.output
 
 
 def test_create_issue_non_interactive_all(tmp_path: Path) -> None:

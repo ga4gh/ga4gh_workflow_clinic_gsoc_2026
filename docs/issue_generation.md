@@ -1,6 +1,6 @@
 # Diagnostic Issue Generation & Interactive CLI Selection
 
-The `workflow-clinic create-issue` command reads diagnostic findings from `diagnosis.json`, performs structural SHA-256 deduplication against existing GitHub issues (or local history), groups new findings by category domain (`containerization`, `resources`, `portability`, `security`), and provides an interactive selection menu before publishing directly to GitHub or exporting to a local Markdown file.
+The `workflow-clinic create-issue` command reads diagnostic findings from `diagnosis.json`, performs structural SHA-256 deduplication against existing GitHub issues, groups new findings by category domain (`containerization`, `resources`, `portability`, `security`), and provides an interactive selection menu before publishing directly to GitHub or exporting to a local Markdown file.
 
 ---
 
