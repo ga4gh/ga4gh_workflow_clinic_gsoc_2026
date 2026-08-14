@@ -309,7 +309,7 @@ def parse_selection(raw: str, max_index: int) -> list[int]:
 
 
 @app.command(name="create-issue")
-def create_issue(  # noqa: C901, PLR0912, PLR0913, PLR0915
+def create_issue(  # noqa: C901, PLR0912, PLR0915
     target: Annotated[
         str,
         typer.Argument(

@@ -82,6 +82,8 @@ ignore = [
     "ISC001",  # implicit string concatenation (conflicts with formatter)
     "E501",    # line too long (handled by formatter)
     "CPY",     # flake8-copyright (copyright notice checks)
+    "PLR0913", # too many arguments (standard in Typer CLI commands)
+    "PLR0917", # too many positional arguments (standard in Typer CLI commands)
 ]
 
 [tool.ruff.lint.isort]
