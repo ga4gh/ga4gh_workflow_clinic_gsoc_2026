@@ -1,6 +1,14 @@
 """Reporting subpackage containing fingerprinting and report generation utilities."""
 
 from workflow_clinic.reporting.fingerprint import compute_fingerprint
+from workflow_clinic.reporting.github_publisher import (
+    GitHubAPIError,
+    GitHubAuthError,
+    GitHubPublisher,
+    GitHubPublisherError,
+    GitHubRepoNotFoundError,
+    PublishedIssueInfo,
+)
 from workflow_clinic.reporting.issue_generator import (
     GeneratedIssue,
     extract_fingerprints,
@@ -11,6 +19,12 @@ from workflow_clinic.reporting.issue_generator import (
 
 __all__ = [
     "GeneratedIssue",
+    "GitHubAPIError",
+    "GitHubAuthError",
+    "GitHubPublisher",
+    "GitHubPublisherError",
+    "GitHubRepoNotFoundError",
+    "PublishedIssueInfo",
     "compute_fingerprint",
     "extract_fingerprints",
     "filter_new_findings",

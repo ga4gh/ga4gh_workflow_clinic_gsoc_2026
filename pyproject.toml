@@ -27,6 +27,7 @@ dependencies = [
     "pydantic>=2.0",
     "rich",
     "litellm>=1.0.0",
+    "PyGithub>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -89,6 +90,7 @@ known-first-party = ["workflow_clinic"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S106", "PLR2004", "SLF001"]  # asserts, magic values, passwords, and private member checks are standard in tests
+"src/workflow_clinic/cli.py" = ["PLR0913", "PLR0917"]  # Typer CLI commands accept multiple options/arguments as function parameters
 
 # --- Mypy (Type Checker) ---
 [tool.mypy]

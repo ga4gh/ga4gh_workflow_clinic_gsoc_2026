@@ -6,6 +6,7 @@ and CLI command routing.
 
 import json
 import logging
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -25,7 +26,13 @@ from workflow_clinic.exceptions import (
 )
 from workflow_clinic.models.diagnosis import DiagnosisReport
 from workflow_clinic.parsers import ParserRegistry
-from workflow_clinic.reporting import compute_fingerprint, generate_issues
+from workflow_clinic.reporting import (
+    GitHubPublisher,
+    GitHubPublisherError,
+    compute_fingerprint,
+    filter_new_findings,
+    generate_issues,
+)
 from workflow_clinic.rules import RuleRunner, Severity
 from workflow_clinic.utils import clone_remote_repo, is_remote_url
 
@@ -302,7 +309,7 @@ def parse_selection(raw: str, max_index: int) -> list[int]:
 
 
 @app.command(name="create-issue")
-def create_issue(  # noqa: C901, PLR0915
+def create_issue(  # noqa: C901, PLR0912, PLR0915
     target: Annotated[
         str,
         typer.Argument(
@@ -331,16 +338,39 @@ def create_issue(  # noqa: C901, PLR0915
             help="Render a Markdown preview in terminal before writing to disk.",
         ),
     ] = False,
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            "-t",
+            help="GitHub Personal Access Token (PAT). Overrides GITHUB_TOKEN env var.",
+        ),
+    ] = None,
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo",
+            "-r",
+            help="Target GitHub repository in 'owner/repo' format. Overrides GITHUB_REPOSITORY env var.",
+        ),
+    ] = None,
+    local: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--local",
+            help="Force local Markdown file export without publishing to GitHub API.",
+        ),
+    ] = False,
     output: Annotated[
         Path,
         typer.Option(
             "--output",
             "-o",
-            help="Output Markdown file path (default: issue.md).",
+            help="Output Markdown file path for local export (default: issue.md).",
         ),
     ] = Path("issue.md"),
 ) -> None:
-    """Export grouped findings from diagnosis.json into GitHub issue markdown format."""
+    """Export grouped findings from diagnosis.json into GitHub issue markdown format or publish directly to GitHub."""
     target_path = Path(target).resolve()
     diag_path = target_path if target_path.is_file() else target_path / "diagnosis.json"
 
@@ -362,10 +392,44 @@ def create_issue(  # noqa: C901, PLR0915
         )
         raise typer.Exit(code=1) from e
 
-    generated_issues = generate_issues(report)
+    token_val = token or os.getenv("GITHUB_TOKEN")
+    repo_val = repo or os.getenv("GITHUB_REPOSITORY")
+    use_github = not local and bool(token_val and repo_val)
+
+    existing_fingerprints: set[str] = set()
+    publisher: GitHubPublisher | None = None
+
+    if not local and (token_val or repo_val):
+        if not token_val:
+            err_console.print(
+                "[red]Error:[/red] GitHub repository specified but GitHub token is missing. Provide via --token or GITHUB_TOKEN."
+            )
+            raise typer.Exit(code=1)
+        if not repo_val:
+            err_console.print(
+                "[red]Error:[/red] GitHub token specified but repository is missing. Provide via --repo or GITHUB_REPOSITORY."
+            )
+            raise typer.Exit(code=1)
+
+        try:
+            publisher = GitHubPublisher(token=token_val, repository=repo_val)
+            existing_fingerprints = publisher.fetch_active_fingerprints()
+        except GitHubPublisherError as e:
+            err_console.print(
+                f"[red]GitHub Authentication/API Error:[/red] {escape(str(e))}"
+            )
+            raise typer.Exit(code=1) from e
+
+    new_findings = filter_new_findings(report.findings, existing_fingerprints)
+    report_to_process = DiagnosisReport(
+        workflow_name=report.workflow_name,
+        findings=new_findings,
+    )
+
+    generated_issues = generate_issues(report_to_process)
     if not generated_issues:
         console.print(
-            "\n[bold green]✓[/bold green] No actionable findings to report!\n"
+            "\n[bold green]✓[/bold green] No new actionable findings to report!\n"
         )
         raise typer.Exit(code=0)
 
@@ -423,15 +487,56 @@ def create_issue(  # noqa: C901, PLR0915
         console.print(Markdown(combined_markdown))
         console.print()
 
-    # Export to output file
-    try:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(combined_markdown + "\n", encoding="utf-8")
-        console.print(
-            f"\n[bold green]✓[/bold green] Exported {len(selected_issues)} issue group(s) to [bold]{escape(str(output))}[/bold]\n"
-        )
-    except OSError as e:
-        err_console.print(
-            f"[red]Error:[/red] Could not write issue file to '{escape(str(output))}': {escape(str(e))}"
-        )
-        raise typer.Exit(code=1) from e
+    # Online GitHub Publishing or Local File Export Fallback
+    if use_github and publisher is not None:
+        published_results = []
+        for iss in selected_issues:
+            try:
+                pub_info = publisher.publish_issue(iss)
+                published_results.append(pub_info)
+            except GitHubPublisherError as e:
+                err_console.print(
+                    f"[red]Failed to publish issue '{iss.title}':[/red] {escape(str(e))}"
+                )
+
+        if published_results:
+            console.print(
+                f"\n[bold green]✓[/bold green] Successfully published {len(published_results)} issue(s) to GitHub repository '[bold]{publisher.repository}[/bold]':\n"
+            )
+            pub_table = Table(show_lines=True)
+            pub_table.add_column("Issue #", style="bold cyan", width=10)
+            pub_table.add_column("Title", width=35)
+            pub_table.add_column("URL", overflow="fold")
+
+            for res in published_results:
+                pub_table.add_row(
+                    f"#{res.number}",
+                    res.title,
+                    f"[link={res.url}]{res.url}[/link]",
+                )
+            console.print(pub_table)
+            console.print("\n[bold]Direct Links:[/bold]")
+            for res in published_results:
+                console.print(
+                    f" • [bold cyan]#{res.number}[/bold cyan]: {res.url}",
+                    soft_wrap=True,
+                )
+            console.print()
+        else:
+            err_console.print(
+                "[red]Error:[/red] Failed to publish any issues to GitHub."
+            )
+            raise typer.Exit(code=1)
+    else:
+        # Export to local output file
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(combined_markdown + "\n", encoding="utf-8")
+            console.print(
+                f"\n[bold green]✓[/bold green] Exported {len(selected_issues)} issue group(s) to [bold]{escape(str(output))}[/bold]\n"
+            )
+        except OSError as e:
+            err_console.print(
+                f"[red]Error:[/red] Could not write issue file to '{escape(str(output))}': {escape(str(e))}"
+            )
+            raise typer.Exit(code=1) from e
