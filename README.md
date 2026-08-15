@@ -91,6 +91,36 @@ ruff format .
 ```
 
 
+## AI Critic & Remediation Guidance (AI-Assisted Review)
+
+Workflow Clinic includes an **AI Critic Agent** to enrich diagnostic findings with AI-powered, cloud-readiness remediation advice.
+
+### Enabling LLM Remediation
+To generate AI remediation advice, run the `examine` command with the `--enhance` (`-e`) flag:
+```bash
+workflow-clinic examine main.nf --enhance
+```
+
+### 🔑 Bring Your Own Key & Model (BYOK & BYOM)
+You can configure any supported LiteLLM model (e.g., OpenAI, Gemini, Anthropic, Groq, Mistral) by setting the respective environment variable.
+
+#### Configuration via `.env` file (Recommended)
+Create a `.env` file in your working directory to permanently save configuration details:
+```env
+GEMINI_API_KEY="your-gemini-api-key"
+CLINIC_MODEL="gemini/gemini-2.5-flash"
+```
+
+#### CLI Options
+You can temporarily override settings directly on the command line:
+```bash
+workflow-clinic examine main.nf --enhance --model gpt-4o --api-key sk-proj-...
+```
+> [!WARNING]
+> **Security Notice**: Avoid passing explicit `--api-key` arguments in shared or public environments as they can leak into your shell history (`history`) or process listings (`ps aux`). Using environment variables or a `.env` file is the highly recommended security practice.
+
+---
+
 ## Supported Workflow Languages
 
 Current target languages:

@@ -1,0 +1,278 @@
+"""Unit and integration tests for examine command CLI critic integration."""
+
+import importlib.util
+import json
+import re
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+from typer.testing import CliRunner
+
+from workflow_clinic.cli import app
+from workflow_clinic.critic.agent import AICriticAgent
+
+runner = CliRunner()
+HAS_NEXTFLOW = importlib.util.find_spec("groovy_parser") is not None
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from a string."""
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_escape.sub("", text)
+
+
+def test_examine_help_shows_enhance_options() -> None:
+    """Verify examine help text lists new enhance options."""
+    result = runner.invoke(app, ["examine", "--help"])
+    assert result.exit_code == 0
+    clean_output = strip_ansi(result.output)
+    assert "--enhance" in clean_output
+    assert "--model" in clean_output
+    assert "--api-key" in clean_output
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+def test_examine_without_enhance_no_remediation(tmp_path: Path) -> None:
+    """Verify examine runs rules without adding any remediation fields by default."""
+    diag_file = tmp_path / "diagnosis_test.json"
+    result = runner.invoke(
+        app, ["examine", "tests/fixtures/poor_practices.nf", "-o", str(diag_file)]
+    )
+    assert result.exit_code != 0  # poor_practices has errors
+
+    # Load file and assert no remediation is populated
+    data = json.loads(diag_file.read_text(encoding="utf-8"))
+    assert "findings" in data
+    assert len(data["findings"]) > 0
+    for finding in data["findings"]:
+        assert finding.get("remediation") is None
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+@patch("workflow_clinic.cli.load_dotenv")
+@patch("workflow_clinic.critic.agent.litellm.completion")
+def test_examine_with_enhance_offline_fallback(
+    mock_completion: MagicMock,
+    mock_load_dotenv: MagicMock,  # noqa: ARG001
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify examine --enhance falls back to local knowledge store if no API keys are present."""
+    # Ensure no API keys are present in env
+    for key in [
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MISTRAL_API_KEY",
+        "COHERE_API_KEY",
+        "GROQ_API_KEY",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    diag_file = tmp_path / "diagnosis_test.json"
+    result = runner.invoke(
+        app,
+        [
+            "examine",
+            "tests/fixtures/poor_practices.nf",
+            "-o",
+            str(diag_file),
+            "--enhance",
+        ],
+    )
+    assert result.exit_code != 0
+
+    # Ensure LiteLLM was NOT called
+    mock_completion.assert_not_called()
+
+    # Verify fallback summary line in terminal output
+    assert "Offline remediation guidance added" in result.output
+    assert "Knowledge Store fallback" in result.output
+
+    # Verify JSON has remediation populated from TOML
+    data = json.loads(diag_file.read_text(encoding="utf-8"))
+    assert len(data["findings"]) > 0
+    for finding in data["findings"]:
+        # advisory W002 INFO findings might not have remediations, but W001 has one
+        if finding["rule_id"] == "W001":
+            assert finding["remediation"] is not None
+            assert "Remediation guidance" in finding["remediation"]["summary"]
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+@patch("workflow_clinic.critic.agent.litellm.completion")
+def test_examine_with_enhance_mocked_llm(
+    mock_completion: MagicMock, tmp_path: Path
+) -> None:
+    """Verify examine --enhance calls LiteLLM completion and parses the returned JSON."""
+    # Mock LLM choice response
+    mock_response = MagicMock()
+    mock_response.choices = [
+        MagicMock(
+            message=MagicMock(
+                content='```json\n{"summary": "Mock LLM Summary", "explanation": "Mock LLM Explanation", "code_example": "Mock Code"}\n```'
+            )
+        )
+    ]
+    mock_completion.return_value = mock_response
+
+    diag_file = tmp_path / "diagnosis_test.json"
+    result = runner.invoke(
+        app,
+        [
+            "examine",
+            "tests/fixtures/poor_practices.nf",
+            "-o",
+            str(diag_file),
+            "--enhance",
+            "--api-key",
+            "sk-test-key-12345",
+            "--model",
+            "gpt-4o",
+        ],
+    )
+    assert result.exit_code != 0
+
+    # Verify litellm.completion was called
+    mock_completion.assert_called()
+
+    # Verify CLI terminal summary shows AI mode
+    assert "AI remediation guidance added" in result.output
+    assert "model: gpt-4o" in result.output
+
+    # Verify JSON has LLM-enhanced remediation
+    data = json.loads(diag_file.read_text(encoding="utf-8"))
+    w001_findings = [f for f in data["findings"] if f["rule_id"] == "W001"]
+    assert len(w001_findings) > 0
+    assert w001_findings[0]["remediation"]["summary"] == "Mock LLM Summary"
+    assert w001_findings[0]["remediation"]["explanation"] == "Mock LLM Explanation"
+    assert w001_findings[0]["remediation"]["code_example"] == "Mock Code"
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+@patch("workflow_clinic.critic.agent.litellm.completion")
+def test_examine_with_enhance_partial_failure(
+    mock_completion: MagicMock, tmp_path: Path
+) -> None:
+    """Verify partial LLM failures fall back gracefully per-finding."""
+    mock_response = MagicMock()
+    mock_response.choices = [
+        MagicMock(
+            message=MagicMock(
+                content='```json\n{"summary": "Mock LLM Summary", "explanation": "Mock LLM Explanation", "code_example": "Mock Code"}\n```'
+            )
+        )
+    ]
+
+    mock_completion.side_effect = [
+        mock_response,
+        RuntimeError("API error on this finding"),
+    ] + [mock_response] * 20
+
+    diag_file = tmp_path / "diagnosis_test.json"
+    result = runner.invoke(
+        app,
+        [
+            "examine",
+            "tests/fixtures/poor_practices.nf",
+            "-o",
+            str(diag_file),
+            "--enhance",
+            "--api-key",
+            "sk-key",
+        ],
+    )
+    assert result.exit_code != 0
+
+    # Ensure JSON has some findings with LLM values and the failed one with TOML fallback
+    data = json.loads(diag_file.read_text(encoding="utf-8"))
+    assert len(data["findings"]) > 0
+
+    succeeded_count = sum(
+        1
+        for f in data["findings"]
+        if f.get("remediation") and f["remediation"]["summary"] == "Mock LLM Summary"
+    )
+    assert succeeded_count > 0
+
+    fallback_count = sum(
+        1
+        for f in data["findings"]
+        if f.get("remediation") and f["remediation"]["summary"] != "Mock LLM Summary"
+    )
+    assert fallback_count > 0
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+@patch.object(AICriticAgent, "enhance_report")
+def test_examine_with_enhance_total_failure_falls_back_gracefully(
+    mock_enhance_report: MagicMock, tmp_path: Path
+) -> None:
+    """Verify total critic failure falls back gracefully to unenhanced report."""
+    mock_enhance_report.side_effect = RuntimeError("Service Unavailable")
+
+    diag_file = tmp_path / "diagnosis_test.json"
+    result = runner.invoke(
+        app,
+        [
+            "examine",
+            "tests/fixtures/poor_practices.nf",
+            "-o",
+            str(diag_file),
+            "--enhance",
+            "--api-key",
+            "sk-key",
+        ],
+    )
+    assert (
+        result.exit_code != 0
+    )  # poor_practices.nf has ERROR severity findings → exit 1
+    assert "AI Critic enhancement failed: Service Unavailable" in result.output
+
+    # Verify JSON was still generated and contains findings without remediations
+    data = json.loads(diag_file.read_text(encoding="utf-8"))
+    assert len(data["findings"]) > 0
+    for finding in data["findings"]:
+        assert finding.get("remediation") is None
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+@patch("workflow_clinic.cli.logger.info")
+@patch("workflow_clinic.critic.agent.litellm.completion")
+def test_examine_with_enhance_api_key_not_logged(
+    mock_completion: MagicMock, mock_logger_info: MagicMock, tmp_path: Path
+) -> None:
+    """Verify raw API key value never appears in log output."""
+    mock_response = MagicMock()
+    mock_response.choices = [
+        MagicMock(
+            message=MagicMock(
+                content='```json\n{"summary": "Mock LLM Summary", "explanation": "Mock LLM Explanation", "code_example": "Mock Code"}\n```'
+            )
+        )
+    ]
+    mock_completion.return_value = mock_response
+
+    diag_file = tmp_path / "diagnosis_test.json"
+
+    runner.invoke(
+        app,
+        [
+            "-v",
+            "examine",
+            "tests/fixtures/poor_practices.nf",
+            "-o",
+            str(diag_file),
+            "--enhance",
+            "--api-key",
+            "sk-supersecret-key-12345",
+        ],
+    )
+
+    assert mock_logger_info.called
+    all_log_args = [
+        str(arg) for call in mock_logger_info.call_args_list for arg in call[0]
+    ]
+    assert not any("sk-supersecret-key-12345" in msg for msg in all_log_args)
+    assert any("[MASKED]" in msg for msg in all_log_args)
