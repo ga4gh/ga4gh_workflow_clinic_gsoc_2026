@@ -117,22 +117,21 @@ def test_audit_workflow_max_tasks_truncation(agent):
     bundle = WorkflowBundle(
         metadata=WorkflowMetadata(name="Huge Workflow"), tasks=tasks
     )
-    with patch.object(agent, "_serialize_bundle", return_value="{}") as mock_serialize:
-        # Mock completion to return empty list
-        with patch(
-            "workflow_clinic.critic.agent.litellm.completion"
-        ) as mock_completion:
-            mock_response = MagicMock()
-            mock_response.choices = [MagicMock()]
-            mock_response.choices[0].message.content = "[]"
-            mock_completion.return_value = mock_response
+    with (
+        patch.object(agent, "_serialize_bundle", return_value="{}") as mock_serialize,
+        patch("workflow_clinic.critic.agent.litellm.completion") as mock_completion,
+    ):
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "[]"
+        mock_completion.return_value = mock_response
 
-            agent.audit_workflow(bundle)
+        agent.audit_workflow(bundle)
 
-            # Assert serialize was called with truncated bundle
-            args, _ = mock_serialize.call_args
-            truncated_bundle = args[0]
-            assert len(truncated_bundle.tasks) == 30
+        # Assert serialize was called with truncated bundle
+        args, _ = mock_serialize.call_args
+        truncated_bundle = args[0]
+        assert len(truncated_bundle.tasks) == 30
 
 
 def test_audit_workflow_returns_empty_without_api_key(sample_bundle):

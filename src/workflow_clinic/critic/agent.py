@@ -271,18 +271,17 @@ Return ONLY valid JSON.
 
     def _serialize_bundle(self, bundle: WorkflowBundle) -> str:
         """Produce a concise workflow summary for LLM context."""
-        tasks = []
-        for task in bundle.tasks:
-            tasks.append(
-                {
-                    "name": task.name,
-                    "container": task.resources.container if task.resources else None,
-                    "cpus": task.resources.cpus if task.resources else None,
-                    "memory": task.resources.memory if task.resources else None,
-                    "file_path": task.file_path,
-                    "line_number": task.line_number,
-                }
-            )
+        tasks = [
+            {
+                "name": task.name,
+                "container": task.resources.container if task.resources else None,
+                "cpus": task.resources.cpus if task.resources else None,
+                "memory": task.resources.memory if task.resources else None,
+                "file_path": task.file_path,
+                "line_number": task.line_number,
+            }
+            for task in bundle.tasks
+        ]
         return json.dumps(
             {"workflow_name": bundle.metadata.name, "tasks": tasks}, indent=2
         )
@@ -317,12 +316,12 @@ Return ONLY valid JSON.
 
         try:
             return Finding(**raw)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Failed to validate AI finding: %s", e)
             return None
 
-    def audit_workflow(
-        self, bundle: WorkflowBundle, static_findings: list[Finding] | None = None
+    def audit_workflow(  # noqa: C901
+        self, bundle: WorkflowBundle, static_findings: list[Any] | None = None
     ) -> list[Finding]:
         """Perform a high-level AI audit of the entire workflow."""
         if (
@@ -424,9 +423,9 @@ Workflow:
                 if validated:
                     findings.append(validated)
 
-            return findings
+            return findings  # noqa: TRY300
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(
                 "LLM completion failed during AI audit. Returning empty findings. Error: %s",
                 e,

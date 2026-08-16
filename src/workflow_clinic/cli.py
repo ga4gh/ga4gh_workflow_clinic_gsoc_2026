@@ -277,13 +277,13 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             else:
                 console.print("[cyan]Performing AI Audit for new issues...[/cyan]")
                 agent = AICriticAgent(
-                    model_name=resolved_model,
+                    model_name=resolved_model or "gemini/gemini-2.5-flash",
                     api_key=api_key,
                 )
                 audit_findings = agent.audit_workflow(
-                    bundle, static_findings=raw_findings
-                )
-                raw_findings.extend(audit_findings)
+                    bundle, static_findings=list(raw_findings)
+                )  # type: ignore[arg-type]
+                raw_findings.extend(audit_findings)  # type: ignore[arg-type]
 
         findings = []
         for f in raw_findings:
@@ -316,10 +316,10 @@ def examine(  # noqa: C901, PLR0912, PLR0915
                     f"[yellow]Notice: No LLM API key found for model '{resolved_model}'. Defaulting to local Knowledge Store fallback.[/yellow]"
                 )
 
-            agent = None
+            critic_agent = None
             try:
-                agent = AICriticAgent(
-                    model_name=resolved_model,
+                critic_agent = AICriticAgent(
+                    model_name=resolved_model or "gemini/gemini-2.5-flash",
                     api_key=api_key,
                 )
                 logger.info(
@@ -327,7 +327,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
                     resolved_model,
                     masked_key,
                 )
-                result = agent.enhance_report(report)
+                result = critic_agent.enhance_report(report)
                 report = result.report
                 fallback_count = result.fallback_count
             except Exception as e:  # noqa: BLE001
