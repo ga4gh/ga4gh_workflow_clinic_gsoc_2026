@@ -177,7 +177,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         typer.Option(
             "--enhance",
             "-e",
-            help="Enhance findings with AI Critic remediation advice.",
+            help="Enable AI Critic to audit for complex issues and generate remediation guidance for all findings.",
         ),
     ] = False,
     model: Annotated[
@@ -185,7 +185,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         typer.Option(
             "--model",
             "-m",
-            help="LiteLLM model string to override default.",
+            help="LiteLLM model name (e.g. gpt-4o, gemini/gemini-2.5-flash).",
         ),
     ] = None,
     api_key: Annotated[
@@ -257,12 +257,40 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         runner = RuleRunner()
         raw_findings = runner.run(bundle)
 
+        resolved_model: str | None = None
+        has_key = False
+        enhance_failed = False
+
+        if enhance:
+            load_dotenv(override=False)
+            resolved_model = _resolve_model(model, api_key)
+            has_key = bool(api_key) or any(
+                bool(os.getenv(env_var)) for env_var, _ in PROVIDER_MODEL_MAP
+            )
+
+        if enhance:
+            if not has_key:
+                err_console.print(
+                    "[yellow]Warning: --enhance requires an LLM API key for auditing and full remediation. "
+                    "Falling back to local knowledge store for remediation only.[/yellow]"
+                )
+            else:
+                console.print("[cyan]Performing AI Audit for new issues...[/cyan]")
+                agent = AICriticAgent(
+                    model_name=resolved_model,
+                    api_key=api_key,
+                )
+                audit_findings = agent.audit_workflow(
+                    bundle, static_findings=raw_findings
+                )
+                raw_findings.extend(audit_findings)
+
         findings = []
         for f in raw_findings:
             fp = compute_fingerprint(
                 file_path=f.file_path or target,
                 rule_id=f.rule_id,
-                task_id=f.task_id,
+                task_id=getattr(f, "task_id", ""),
                 target_token=f.message,
             )
             f_dict = f.model_dump()
@@ -278,20 +306,11 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             findings=findings,
         )
 
-        resolved_model: str | None = None
-        has_key = False
-        enhance_failed = False
-
         if enhance:
-            load_dotenv(override=False)
-
-            resolved_model = _resolve_model(model, api_key)
-
             # Mask API key if logged / traced
             masked_key = "[MASKED]" if api_key else "None"
 
             has_key = check_model_api_key(resolved_model, api_key)
-
             if not has_key:
                 console.print(
                     f"[yellow]Notice: No LLM API key found for model '{resolved_model}'. Defaulting to local Knowledge Store fallback.[/yellow]"

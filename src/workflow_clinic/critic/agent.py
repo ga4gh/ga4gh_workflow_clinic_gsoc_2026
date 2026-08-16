@@ -7,6 +7,7 @@ from typing import Any, NamedTuple
 
 from workflow_clinic.advisor.retriever import RuleKnowledgeStore
 from workflow_clinic.models.diagnosis import DiagnosisReport, Finding, Remediation
+from workflow_clinic.models.workflow_bundle import WorkflowBundle
 
 
 class EnhancedResult(NamedTuple):
@@ -17,6 +18,8 @@ class EnhancedResult(NamedTuple):
 
 
 logger = logging.getLogger(__name__)
+
+MAX_AUDIT_TASKS = 30
 
 try:
     import litellm
@@ -265,3 +268,167 @@ Return ONLY valid JSON.
 
         enhanced_report = report.model_copy(update={"findings": enhanced_findings})
         return EnhancedResult(report=enhanced_report, fallback_count=fallback_count)
+
+    def _serialize_bundle(self, bundle: WorkflowBundle) -> str:
+        """Produce a concise workflow summary for LLM context."""
+        tasks = []
+        for task in bundle.tasks:
+            tasks.append(
+                {
+                    "name": task.name,
+                    "container": task.resources.container if task.resources else None,
+                    "cpus": task.resources.cpus if task.resources else None,
+                    "memory": task.resources.memory if task.resources else None,
+                    "file_path": task.file_path,
+                    "line_number": task.line_number,
+                }
+            )
+        return json.dumps(
+            {"workflow_name": bundle.metadata.name, "tasks": tasks}, indent=2
+        )
+
+    def _validate_ai_finding(self, raw: dict, bundle: WorkflowBundle) -> Finding | None:
+        """Validate LLM-generated finding against actual WorkflowBundle."""
+        # 1. rule_id must start with AI
+        rule_id = raw.get("rule_id", "")
+        if not rule_id.startswith("AI"):
+            logger.warning("Rejected AI finding with invalid rule_id: %s", rule_id)
+            return None
+
+        # 2. If process name given, it must exist in the bundle
+        process_name = raw.get("process_name") or raw.get("location")
+        if process_name:
+            known_tasks = {t.name for t in bundle.tasks}
+            if process_name not in known_tasks:
+                logger.warning(
+                    "Rejected AI finding referencing unknown process: %s", process_name
+                )
+                return None
+            raw["process_name"] = process_name  # Normalize in case they used location
+
+        # 3. severity must be a valid enum value
+        severity = raw.get("severity", "").lower()
+        if severity not in ("info", "warning", "error"):
+            raw["severity"] = "warning"  # safe default
+
+        # 4. message must be non-empty
+        if not raw.get("message", "").strip():
+            return None
+
+        try:
+            return Finding(**raw)
+        except Exception as e:
+            logger.warning("Failed to validate AI finding: %s", e)
+            return None
+
+    def audit_workflow(
+        self, bundle: WorkflowBundle, static_findings: list[Finding] | None = None
+    ) -> list[Finding]:
+        """Perform a high-level AI audit of the entire workflow."""
+        if (
+            not self.enable_llm
+            or not getattr(litellm, "completion", None)
+            or not self._has_api_key()
+        ):
+            logger.info("LLM API key not configured or disabled. Skipping AI audit.")
+            return []
+
+        if len(bundle.tasks) > MAX_AUDIT_TASKS:
+            logger.warning(
+                "Workflow has %d tasks — auditing first %d only.",
+                len(bundle.tasks),
+                MAX_AUDIT_TASKS,
+            )
+            # Truncate tasks for auditing to avoid token explosion
+            bundle = bundle.model_copy(update={"tasks": bundle.tasks[:MAX_AUDIT_TASKS]})
+
+        workflow_json = self._serialize_bundle(bundle)
+
+        static_findings_str = "None"
+        if static_findings:
+            sf_list = [
+                {
+                    "process_name": getattr(f, "process_name", ""),
+                    "rule_id": f.rule_id,
+                    "message": f.message,
+                }
+                for f in static_findings
+            ]
+            static_findings_str = json.dumps(sf_list, indent=2)
+
+        prompt = f"""You are a bioinformatics workflow auditor. Analyze this Nextflow workflow for cloud-readiness issues
+that static rules miss: shell anti-patterns, implicit dependencies, missing error handling.
+
+IMPORTANT DEDUPLICATION INSTRUCTION:
+Do NOT report any issues that are already covered by these existing static findings:
+{static_findings_str}
+
+Use ONLY these rule_ids for categories of issues you find:
+- AI001: Shell scripting anti-patterns or risky commands
+- AI002: Implicit dependencies or silent failure risks
+- AI003: Logic bugs or missing guardrails
+
+Return ONLY a JSON array. Each item must match this exact schema:
+[
+  {{
+    "rule_id": "AI001",
+    "severity": "warning",
+    "category": "shell_patterns",
+    "title": "Short description",
+    "message": "Detailed explanation",
+    "process_name": "PROCESS_NAME or null",
+    "file_path": "filename.nf or null"
+  }}
+]
+
+Return [] if no issues found. Return ONLY JSON, no markdown fences, no explanation.
+
+CRITICAL INSTRUCTIONS TO PREVENT HALLUCINATION:
+1. DO NOT invent or hallucinate issues. If a process does not have a shell script anti-pattern, do not report it.
+2. DO NOT assume missing functionality (like missing error handling or missing checks) is a bug unless it explicitly violates a known Nextflow/Cloud best practice.
+3. If the script is perfectly fine, or if all issues are already covered by the static findings above, you MUST return an empty array []. Do not try to force a finding.
+
+Workflow:
+{workflow_json}
+"""
+
+        try:
+            kwargs: dict[str, Any] = {
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+            }
+            if self.api_key:
+                kwargs["api_key"] = self.api_key
+
+            response = litellm.completion(**kwargs)
+            if isinstance(response, dict):
+                content = response["choices"][0]["message"]["content"].strip()
+            else:
+                content = response.choices[0].message.content.strip()
+
+            # Clean JSON markdown code blocks if present
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:].strip()
+
+            data = json.loads(content)
+            if not isinstance(data, list):
+                logger.warning("AI audit returned non-list JSON.")
+                return []
+
+            findings = []
+            for raw_finding in data:
+                validated = self._validate_ai_finding(raw_finding, bundle)
+                if validated:
+                    findings.append(validated)
+
+            return findings
+
+        except Exception as e:
+            logger.warning(
+                "LLM completion failed during AI audit. Returning empty findings. Error: %s",
+                e,
+            )
+            return []
