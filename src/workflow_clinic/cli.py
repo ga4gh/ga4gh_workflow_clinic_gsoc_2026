@@ -111,6 +111,42 @@ _SEVERITY_COLORS: dict[Severity, str] = {
     Severity.ERROR: "red",
 }
 
+PROVIDER_MODEL_MAP = [
+    ("GEMINI_API_KEY", "gemini/gemini-2.5-flash"),
+    ("OPENAI_API_KEY", "gpt-4o-mini"),
+    ("ANTHROPIC_API_KEY", "claude-3-5-sonnet-20240620"),
+    ("MISTRAL_API_KEY", "mistral/mistral-large-latest"),
+    ("GROQ_API_KEY", "groq/llama-3.1-8b-instant"),
+    ("COHERE_API_KEY", "cohere/command-r"),
+]
+
+
+def _resolve_model(explicit_model: str | None, api_key: str | None) -> str:
+    """Resolve the LiteLLM model using CLI flags, env vars, or auto-detection."""
+    if explicit_model:
+        return explicit_model
+    if clinic_model := os.getenv("CLINIC_MODEL"):
+        return clinic_model
+    for env_var, model_name in PROVIDER_MODEL_MAP:
+        if os.getenv(env_var):
+            return model_name
+    if api_key:
+        logger.warning(
+            "--api-key provided without --model. Defaulting to gemini/gemini-2.5-flash."
+        )
+    return "gemini/gemini-2.5-flash"
+
+
+@app.command()
+def list_models() -> None:
+    """List supported LiteLLM model strings and their required environment variables."""
+    table = Table(title="Supported AI Models")
+    table.add_column("Provider Key")
+    table.add_column("Default Model")
+    for env_var, model in PROVIDER_MODEL_MAP:
+        table.add_row(env_var, model)
+    console.print(table)
+
 
 @app.command()
 def examine(  # noqa: C901, PLR0912, PLR0915
@@ -242,7 +278,6 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             findings=findings,
         )
 
-        is_enhanced = False
         resolved_model: str | None = None
         has_key = False
         enhance_failed = False
@@ -250,9 +285,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         if enhance:
             load_dotenv(override=False)
 
-            resolved_model = (
-                model or os.getenv("CLINIC_MODEL") or "gemini/gemini-2.5-flash"
-            )
+            resolved_model = _resolve_model(model, api_key)
 
             # Mask API key if logged / traced
             masked_key = "[MASKED]" if api_key else "None"
@@ -264,6 +297,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
                     f"[yellow]Notice: No LLM API key found for model '{resolved_model}'. Defaulting to local Knowledge Store fallback.[/yellow]"
                 )
 
+            agent = None
             try:
                 agent = AICriticAgent(
                     model_name=resolved_model,
@@ -274,10 +308,9 @@ def examine(  # noqa: C901, PLR0912, PLR0915
                     resolved_model,
                     masked_key,
                 )
-                enhanced_report = agent.enhance_report(report)
+                enhanced_report, fallback_count = agent.enhance_report(report)
                 if enhanced_report is not None:
                     report = enhanced_report
-                    is_enhanced = True
                 else:
                     logger.warning(
                         "enhance_report returned None. Using unenhanced report."
@@ -349,14 +382,25 @@ def examine(  # noqa: C901, PLR0912, PLR0915
 
         if enhance:
             if enhance_failed:
-                pass
-            elif is_enhanced and has_key:
+                err_console.print(
+                    f"[yellow]⚠️  AI Critic Enhancement Failed: Could not reach LLM. "
+                    f"All {len(findings)} findings using offline Knowledge Store.[/yellow]"
+                )
+            elif not has_key:
                 console.print(
-                    f"[green]✓[/green] AI remediation guidance added to {len(findings)}/{len(findings)} findings (model: {resolved_model})"
+                    f"[green]✓[/green] Offline remediation guidance added to {len(findings)}/{len(findings)} findings (Knowledge Store fallback)"
+                )
+            elif fallback_count == len(findings) and len(findings) > 0:
+                console.print(
+                    f"[yellow]⚠️  AI Critic Enhancement Failed: All {len(findings)} findings fell back to the offline Knowledge Store.[/yellow]"
+                )
+            elif fallback_count > 0:
+                console.print(
+                    f"[yellow]⚠️  AI Critic Partial Failure: {fallback_count}/{len(findings)} findings fell back to the offline Knowledge Store.[/yellow]"
                 )
             else:
                 console.print(
-                    f"[green]✓[/green] Offline remediation guidance added to {len(findings)}/{len(findings)} findings (Knowledge Store fallback)"
+                    f"[green]✓[/green] AI remediation guidance added to {len(findings)}/{len(findings)} findings (model: {resolved_model})"
                 )
         console.print()
 

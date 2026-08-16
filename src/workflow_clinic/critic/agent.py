@@ -3,10 +3,18 @@
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, NamedTuple
 
 from workflow_clinic.advisor.retriever import RuleKnowledgeStore
 from workflow_clinic.models.diagnosis import DiagnosisReport, Finding, Remediation
+
+
+class EnhancedResult(NamedTuple):
+    """Result of an AI Critic enhancement pass."""
+
+    report: DiagnosisReport
+    fallback_count: int
+
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +118,7 @@ class AICriticAgent:
 
     def _fallback_remediation(
         self, finding: Finding, kb_sections: list[str] | None = None
-    ) -> Remediation:
+    ) -> tuple[Remediation, bool]:
         """Construct a structured Remediation directly from the TOML Knowledge Store."""
         sections = (
             kb_sections
@@ -126,7 +134,7 @@ class AICriticAgent:
                 summary=summary,
                 explanation=explanation,
                 code_example=None,
-            )
+            ), True
 
         return Remediation(
             summary=f"Resolve issue: {finding.title}",
@@ -135,7 +143,7 @@ class AICriticAgent:
                 f"Please review file '{finding.file_path}' to ensure cloud readiness and compliance."
             ),
             code_example=None,
-        )
+        ), True
 
     def _build_prompt(self, finding: Finding, kb_sections: list[str]) -> str:
         """Build a structured LLM prompt incorporating finding context and knowledge base rules."""
@@ -162,13 +170,13 @@ Provide structured remediation advice in valid JSON format matching the schema b
 {{
   "summary": "Short 1-sentence summary of the required fix",
   "explanation": "Detailed explanation of why this fix is necessary for cloud readiness and portability",
-  "code_example": "Optional code snippet demonstrating the correct pattern (or null)"
+  "code_example": "Optional code snippet demonstrating the correct pattern (MUST be a single JSON string or null)"
 }}
 
 Return ONLY valid JSON.
 """
 
-    def enhance_finding(self, finding: Finding) -> Remediation:
+    def enhance_finding(self, finding: Finding) -> tuple[Remediation, bool]:
         """Generate structured remediation advice for a single diagnostic finding.
 
         Args:
@@ -216,11 +224,15 @@ Return ONLY valid JSON.
                     content = content[4:].strip()
 
             data = json.loads(content)
+            code_example_raw = data.get("code_example")
+            if code_example_raw is not None and not isinstance(code_example_raw, str):
+                code_example_raw = json.dumps(code_example_raw, indent=2)
+
             return Remediation(
                 summary=data.get("summary", f"Resolve {finding.rule_id}"),
                 explanation=data.get("explanation", "Review workflow configuration."),
-                code_example=data.get("code_example"),
-            )
+                code_example=code_example_raw,
+            ), False
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "LLM completion failed for rule %s (%s). Falling back to Knowledge Store.",
@@ -229,19 +241,23 @@ Return ONLY valid JSON.
             )
             return self._fallback_remediation(finding, kb_sections)
 
-    def enhance_report(self, report: DiagnosisReport) -> DiagnosisReport:
+    def enhance_report(self, report: DiagnosisReport) -> EnhancedResult:
         """Enhance all findings in a DiagnosisReport with AI Critic remediation advice.
 
         Args:
             report: Target DiagnosisReport instance.
 
         Returns:
-            New DiagnosisReport instance with populated remediations.
+            EnhancedResult named tuple containing the new report and fallback count.
         """
+        fallback_count = 0
         enhanced_findings = []
         for finding in report.findings:
-            remediation = self.enhance_finding(finding)
+            remediation, is_fallback = self.enhance_finding(finding)
+            if is_fallback:
+                fallback_count += 1
             enhanced_finding = finding.model_copy(update={"remediation": remediation})
             enhanced_findings.append(enhanced_finding)
 
-        return report.model_copy(update={"findings": enhanced_findings})
+        enhanced_report = report.model_copy(update={"findings": enhanced_findings})
+        return EnhancedResult(report=enhanced_report, fallback_count=fallback_count)

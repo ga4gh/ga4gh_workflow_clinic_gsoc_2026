@@ -33,7 +33,7 @@ def test_ai_critic_fallback_without_api_keys(monkeypatch: pytest.MonkeyPatch) ->
         line_number=12,
     )
 
-    remediation = agent.enhance_finding(finding)
+    remediation, _ = agent.enhance_finding(finding)
 
     assert isinstance(remediation, Remediation)
     assert "W001" in remediation.summary
@@ -57,7 +57,7 @@ def test_ai_critic_fallback_custom_knowledge_store() -> None:
         file_path="modules/fastqc.nf",
     )
 
-    remediation = agent.enhance_finding(finding)
+    remediation, _ = agent.enhance_finding(finding)
 
     assert isinstance(remediation, Remediation)
     assert "Pin container tags using SHA" in remediation.explanation
@@ -87,7 +87,7 @@ def test_ai_critic_llm_completion_success(mock_completion: MagicMock) -> None:
         file_path="main.nf",
     )
 
-    remediation = agent.enhance_finding(finding)
+    remediation, _ = agent.enhance_finding(finding)
 
     assert isinstance(remediation, Remediation)
     assert remediation.summary == "Pin container tag to v0.11.9"
@@ -114,7 +114,7 @@ def test_ai_critic_llm_completion_error_fallback(mock_completion: MagicMock) -> 
         file_path="processes/align.nf",
     )
 
-    remediation = agent.enhance_finding(finding)
+    remediation, _ = agent.enhance_finding(finding)
 
     assert isinstance(remediation, Remediation)
     assert (
