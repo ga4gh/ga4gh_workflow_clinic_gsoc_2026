@@ -150,9 +150,10 @@ def test_ai_critic_enhance_report() -> None:
         ],
     )
 
-    enhanced_report = agent.enhance_report(report)
+    enhanced_report, fallback_count = agent.enhance_report(report)
 
     assert isinstance(enhanced_report, DiagnosisReport)
     assert len(enhanced_report.findings) == 2
     assert enhanced_report.findings[0].remediation is not None
     assert enhanced_report.findings[1].remediation is not None
+    assert fallback_count == 2
