@@ -42,7 +42,9 @@ class PinnedContainerRule(BaseRule):
                         message=f"Process '{task.name}' has no container defined.",
                         severity=Severity.ERROR,
                         task_id=task.id,
-                        location=task.name,
+                        process_name=task.name,
+                        file_path=task.file_path,
+                        line_number=task.line_number,
                     )
                 )
                 continue
@@ -58,7 +60,9 @@ class PinnedContainerRule(BaseRule):
                         ),
                         severity=Severity.WARNING,
                         task_id=task.id,
-                        location=task.name,
+                        process_name=task.name,
+                        file_path=task.file_path,
+                        line_number=task.line_number,
                     )
                 )
 

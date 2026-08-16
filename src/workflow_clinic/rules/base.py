@@ -46,7 +46,9 @@ class Finding(BaseModel):
     message: str
     severity: Severity
     task_id: str | None = None
-    location: str | None = None
+    process_name: str | None = None
+    file_path: str = ""
+    line_number: int | None = None
 
 
 class BaseRule(ABC):

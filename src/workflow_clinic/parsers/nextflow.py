@@ -228,7 +228,7 @@ class NextflowParser(BaseParser):
 
         return container_image, cpus, memory
 
-    def _parse_processes(self, ast: Any) -> list[Task]:
+    def _parse_processes(self, ast: Any, script_file: Path, content: str) -> list[Task]:
         """Traverse the AST to extract processes and map them to Task structures."""
         tasks = []
         processes = self._collect_processes(ast)
@@ -239,6 +239,15 @@ class NextflowParser(BaseParser):
             )
             if not process_name:
                 continue
+
+            line_number = None
+            match = re.search(
+                r"^[ \t]*process\s+" + re.escape(process_name) + r"\s*\{",
+                content,
+                flags=re.MULTILINE,
+            )
+            if match:
+                line_number = content[: match.start()].count("\n") + 1
 
             container_image, cpus, memory = self._extract_directives(p)
 
@@ -265,6 +274,8 @@ class NextflowParser(BaseParser):
                     name=process_name,
                     command=script_text,
                     resources=resources,
+                    file_path=script_file.name,
+                    line_number=line_number,
                 )
             except (ValueError, ValidationError) as e:
                 msg = f"Invalid resource values in process '{process_name}': {e}"
@@ -304,7 +315,7 @@ class NextflowParser(BaseParser):
             msg = f"Failed to parse Nextflow file {script_file}: {e}"
             raise ParserError(msg) from e
 
-        tasks = self._parse_processes(ast)
+        tasks = self._parse_processes(ast, script_file, content)
 
         # Recursively follow DSL2 include statements
         base_dir = script_file.parent

@@ -330,3 +330,20 @@ def test_parse_dummy_nf_fixture() -> None:
     )
     assert fastqc.resources.cpus == 2
     assert fastqc.resources.memory == "4"  # Evaluates closure to first numeric literal
+
+
+def test_parser_populates_line_numbers(tmp_path: Path) -> None:
+    """Verify line numbers match actual process declarations in source."""
+    content = "\n\nprocess FASTQC {\n    cpus 2\n}\n"
+    nf_file = tmp_path / "test.nf"
+    nf_file.write_text(content)
+
+    parser = NextflowParser()
+    bundle = parser.parse(nf_file)
+
+    assert len(bundle.tasks) == 1
+    task = bundle.tasks[0]
+
+    assert task.name == "FASTQC"
+    assert task.file_path == "test.nf"
+    assert task.line_number == 3

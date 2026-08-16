@@ -260,13 +260,13 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         findings = []
         for f in raw_findings:
             fp = compute_fingerprint(
-                file_path=target,
+                file_path=f.file_path or f.process_name or target,
                 rule_id=f.rule_id,
                 task_id=f.task_id,
                 target_token=f.message,
             )
             f_dict = f.model_dump()
-            f_dict["file_path"] = target
+            f_dict["file_path"] = f.file_path or target
             f_dict["fingerprint"] = fp.model_dump()
             f_dict["id"] = fp.hash
             findings.append(DiagnosisFinding.model_validate(f_dict))
@@ -347,7 +347,8 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             show_lines=True,
         )
         table.add_column("Severity", style="bold", width=10)
-        table.add_column("Rule", width=20)
+        table.add_column("Rule", width=10)
+        table.add_column("Location", width=25)
         table.add_column("Process", width=18)
         table.add_column("Message")
 
@@ -357,10 +358,15 @@ def examine(  # noqa: C901, PLR0912, PLR0915
                 color = _SEVERITY_COLORS.get(sev_enum, "white")
             except ValueError:
                 color = "white"
+
+            loc_str = finding.file_path
+            if finding.line_number:
+                loc_str += f":{finding.line_number}"
             table.add_row(
                 f"[{color}]{finding.severity.upper()}[/{color}]",
                 finding.rule_id,
-                finding.location or "—",
+                loc_str or "—",
+                finding.process_name or "—",
                 finding.message,
             )
 

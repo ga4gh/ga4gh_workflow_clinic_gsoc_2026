@@ -44,7 +44,7 @@ class Finding(BaseModel):
     line_number: int | None = Field(
         default=None, description="Optional line number where issue was detected"
     )
-    location: str | None = Field(
+    process_name: str | None = Field(
         default=None, description="Optional location hint from examine output"
     )
     message: str | None = Field(
@@ -80,7 +80,7 @@ class Finding(BaseModel):
 
             # Normalize location to file_path
             if not data.get("file_path"):
-                data["file_path"] = data.get("location") or "main.nf"
+                data["file_path"] = data.get("process_name") or "main.nf"
 
             # Normalize message to title
             if not data.get("title"):

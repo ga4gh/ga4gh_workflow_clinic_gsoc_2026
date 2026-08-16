@@ -41,7 +41,9 @@ class ResourceLimitsRule(BaseRule):
                         ),
                         severity=Severity.WARNING,
                         task_id=task.id,
-                        location=task.name,
+                        process_name=task.name,
+                        file_path=task.file_path,
+                        line_number=task.line_number,
                     )
                 )
             elif task.resources.cpus == 1:
@@ -55,7 +57,9 @@ class ResourceLimitsRule(BaseRule):
                         ),
                         severity=Severity.INFO,
                         task_id=task.id,
-                        location=task.name,
+                        process_name=task.name,
+                        file_path=task.file_path,
+                        line_number=task.line_number,
                     )
                 )
 
@@ -69,7 +73,9 @@ class ResourceLimitsRule(BaseRule):
                         ),
                         severity=Severity.WARNING,
                         task_id=task.id,
-                        location=task.name,
+                        process_name=task.name,
+                        file_path=task.file_path,
+                        line_number=task.line_number,
                     )
                 )
 

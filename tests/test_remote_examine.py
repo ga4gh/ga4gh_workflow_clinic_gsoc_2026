@@ -95,6 +95,8 @@ def test_examine_remote_repository_cli_flow(
     mock_task.id = "FASTQC"
     mock_task.name = "FASTQC"
     mock_task.command = None
+    mock_task.file_path = "main.nf"
+    mock_task.line_number = 42
     mock_bundle.tasks = [mock_task]
 
     mock_parser_inst = MagicMock()
@@ -132,6 +134,8 @@ def test_remote_examine_stable_fingerprint_across_runs(
     mock_task.id = "FASTQC"
     mock_task.name = "FASTQC"
     mock_task.command = None
+    mock_task.file_path = "main.nf"
+    mock_task.line_number = 42
     mock_bundle.tasks = [mock_task]
 
     mock_parser_inst = MagicMock()
