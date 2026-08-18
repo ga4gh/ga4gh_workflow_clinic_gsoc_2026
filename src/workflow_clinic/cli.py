@@ -223,12 +223,13 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         findings = []
         for f in raw_findings:
             fp = compute_fingerprint(
-                file_path=f.location or target,
+                file_path=target,
                 rule_id=f.rule_id,
                 task_id=f.task_id,
                 target_token=f.message,
             )
             f_dict = f.model_dump()
+            f_dict["file_path"] = target
             f_dict["fingerprint"] = fp.model_dump()
             f_dict["id"] = fp.hash
             findings.append(DiagnosisFinding.model_validate(f_dict))
@@ -253,9 +254,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             )
 
             # Mask API key if logged / traced
-            masked_key = "None"
-            if api_key:
-                masked_key = f"{api_key[:8]}...[MASKED]" if len(api_key) > 8 else "***"  # noqa: PLR2004
+            masked_key = "[MASKED]" if api_key else "None"
 
             has_key = bool(api_key) or any(
                 bool(os.getenv(k))
@@ -333,8 +332,8 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         table.add_column("Message")
 
         for finding in findings:
-            severity_enum = Severity(finding.severity.lower())
-            color = _SEVERITY_COLORS.get(severity_enum, "white")
+            sev_str = finding.severity.lower()
+            color = _SEVERITY_COLORS.get(sev_str, "white")
             table.add_row(
                 f"[{color}]{finding.severity.upper()}[/{color}]",
                 finding.rule_id,
@@ -346,15 +345,9 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         console.print(table)
 
         # Summary line
-        n_err = sum(
-            1 for f in findings if Severity(f.severity.lower()) == Severity.ERROR
-        )
-        n_warn = sum(
-            1 for f in findings if Severity(f.severity.lower()) == Severity.WARNING
-        )
-        n_info = sum(
-            1 for f in findings if Severity(f.severity.lower()) == Severity.INFO
-        )
+        n_err = sum(1 for f in findings if f.severity.lower() == "error")
+        n_warn = sum(1 for f in findings if f.severity.lower() == "warning")
+        n_info = sum(1 for f in findings if f.severity.lower() == "info")
         console.print(
             f"\n[bold]Summary:[/bold] {n_err} error(s), "
             f"{n_warn} warning(s), {n_info} info(s)"
