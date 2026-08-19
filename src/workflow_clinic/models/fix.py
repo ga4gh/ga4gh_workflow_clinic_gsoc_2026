@@ -43,6 +43,10 @@ class FixProposal(BaseModel):
     strategy_layer: FixStrategyLayer = Field(
         ..., description="Priority layer strategy used to generate proposal"
     )
+    line_number: int | None = Field(
+        default=None,
+        description="Optional 1-based line number of the target code snippet",
+    )
 
 
 class ApplyOutcome(BaseModel):

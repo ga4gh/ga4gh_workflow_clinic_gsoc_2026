@@ -93,9 +93,37 @@ class BaseFixer(ABC):
                     verification_passed=False,
                 )
 
-            new_content = content.replace(
-                proposal.original_snippet, proposal.proposed_snippet, 1
-            )
+            if proposal.line_number and proposal.line_number > 0:
+                occurrences: list[int] = []
+                start = 0
+                while True:
+                    idx = content.find(proposal.original_snippet, start)
+                    if idx == -1:
+                        break
+                    occurrences.append(idx)
+                    start = idx + 1
+
+                if occurrences:
+                    best_idx = min(
+                        occurrences,
+                        key=lambda pos: abs(
+                            content[:pos].count("\n") + 1 - proposal.line_number  # type: ignore[operator]
+                        ),
+                    )
+                    new_content = (
+                        content[:best_idx]
+                        + proposal.proposed_snippet
+                        + content[best_idx + len(proposal.original_snippet) :]
+                    )
+                else:
+                    new_content = content.replace(
+                        proposal.original_snippet, proposal.proposed_snippet, 1
+                    )
+            else:
+                new_content = content.replace(
+                    proposal.original_snippet, proposal.proposed_snippet, 1
+                )
+
             target_path.write_text(new_content, encoding="utf-8")
 
             verified = self.verify_fix(target_path)

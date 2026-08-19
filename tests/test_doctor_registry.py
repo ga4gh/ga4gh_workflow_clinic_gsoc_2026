@@ -212,3 +212,33 @@ def test_doctor_runner_cascade(tmp_path: Path) -> None:
     assert session.failed_count == 0
     assert len(session.modified_files) == 1
     assert target_file.read_text(encoding="utf-8") == "input_file = 'params.input'\n"
+
+
+def test_apply_fix_line_targeted_multiple_occurrences(tmp_path: Path) -> None:
+    """Verify apply_fix targets the occurrence closest to proposal.line_number when identical snippets exist."""
+    content = "process FOO {\n    cpus 1\n}\n\nprocess BAR {\n    cpus 1\n}\n"
+    target_file = tmp_path / "multi.nf"
+    target_file.write_text(content, encoding="utf-8")
+
+    fixer = DummyRegexFixer()
+    # Target line 6 (inside process BAR)
+    prop = FixProposal(
+        finding_id="h2",
+        rule_id="W001",
+        category="containerization",
+        target_file="multi.nf",
+        original_snippet="cpus 1",
+        proposed_snippet="cpus 4",
+        explanation="Upgrade BAR cpus",
+        strategy_layer=FixStrategyLayer.LAYER2_REGEX,
+        line_number=6,
+    )
+
+    outcome = fixer.apply_fix(prop, root_dir=tmp_path)
+    assert outcome.success is True
+    updated_content = target_file.read_text(encoding="utf-8")
+
+    # FOO at line 2 must be untouched
+    assert "process FOO {\n    cpus 1\n}" in updated_content
+    # BAR at line 6 must be patched
+    assert "process BAR {\n    cpus 4\n}" in updated_content
