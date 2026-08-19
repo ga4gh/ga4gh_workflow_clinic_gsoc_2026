@@ -287,10 +287,12 @@ def examine(  # noqa: C901, PLR0912, PLR0915
 
         findings = []
         for f in raw_findings:
+            file_p = getattr(f, "file_path", None) or target
+            task_id_val = getattr(f, "task_id", None) or None
             fp = compute_fingerprint(
-                file_path=f.file_path or target,
+                file_path=file_p,
                 rule_id=f.rule_id,
-                task_id=getattr(f, "task_id", ""),
+                task_id=task_id_val,
                 target_token=f.message,
             )
             f_dict = f.model_dump()

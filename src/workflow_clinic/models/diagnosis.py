@@ -80,11 +80,7 @@ class Finding(BaseModel):
 
             # Normalize location to file_path and process_name for backward compatibility
             if not data.get("file_path"):
-                data["file_path"] = (
-                    data.get("location") or data.get("process_name") or "main.nf"
-                )
-            if not data.get("process_name") and data.get("location"):
-                data["process_name"] = data["location"]
+                data["file_path"] = data.get("location") or "main.nf"
 
             # Normalize message to title
             if not data.get("title"):

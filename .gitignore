@@ -19,6 +19,7 @@ env/
 .coverage
 htmlcov/
 .mypy_cache/
+pytest_out.txt
 
 # Tool outputs
 diagnosis.json
