@@ -332,8 +332,11 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         table.add_column("Message")
 
         for finding in findings:
-            sev_str = finding.severity.lower()
-            color = _SEVERITY_COLORS.get(sev_str, "white")
+            try:
+                sev_enum = Severity(finding.severity.lower())
+                color = _SEVERITY_COLORS.get(sev_enum, "white")
+            except ValueError:
+                color = "white"
             table.add_row(
                 f"[{color}]{finding.severity.upper()}[/{color}]",
                 finding.rule_id,
