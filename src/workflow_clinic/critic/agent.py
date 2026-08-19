@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from typing import Any, NamedTuple
 
 from workflow_clinic.advisor.retriever import RuleKnowledgeStore
@@ -43,7 +44,9 @@ _PROVIDER_ENV_KEYS: dict[str, list[str]] = {
 }
 
 
-def check_model_api_key(model_name: str, explicit_key: str | None = None) -> bool:
+def check_model_api_key(
+    model_name: str | None, explicit_key: str | None = None
+) -> bool:
     """Validate if an API key exists specifically for the requested model provider.
 
     Args:
@@ -55,6 +58,8 @@ def check_model_api_key(model_name: str, explicit_key: str | None = None) -> boo
     """
     if explicit_key:
         return True
+    if not model_name:
+        return False
 
     clean_model = model_name.strip().lower()
     if "/" in clean_model:
@@ -320,7 +325,7 @@ Return ONLY valid JSON.
             logger.warning("Failed to validate AI finding: %s", e)
             return None
 
-    def audit_workflow(  # noqa: C901
+    def audit_workflow(  # noqa: C901, PLR0912
         self, bundle: WorkflowBundle, static_findings: list[Any] | None = None
     ) -> list[Finding]:
         """Perform a high-level AI audit of the entire workflow."""
@@ -406,8 +411,11 @@ Workflow:
             else:
                 content = response.choices[0].message.content.strip()
 
-            # Clean JSON markdown code blocks if present
-            if content.startswith("```"):
+            # Extract JSON array even if surrounded by conversational text or markdown blocks
+            json_match = re.search(r"\[.*\]", content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0).strip()
+            elif content.startswith("```"):
                 content = content.split("```")[1]
                 if content.startswith("json"):
                     content = content[4:].strip()

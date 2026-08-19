@@ -180,3 +180,31 @@ def test_audit_workflow_handles_non_list_response(
     mock_completion.return_value = mock_response
     findings = agent.audit_workflow(sample_bundle)
     assert findings == []
+
+
+@patch("workflow_clinic.critic.agent.litellm.completion")
+def test_audit_workflow_chatty_conversational_response(
+    mock_completion, agent, sample_bundle
+):
+    """Verify that conversational text surrounding the JSON array is cleanly extracted."""
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = (
+        "Sure, I'd love to help! Here is the audit report you requested:\n\n"
+        "```json\n"
+        "[\n"
+        "  {\n"
+        '    "rule_id": "AI001",\n'
+        '    "severity": "warning",\n'
+        '    "message": "Shell scripting issue",\n'
+        '    "process_name": "FASTQC"\n'
+        "  }\n"
+        "]\n"
+        "```\n\n"
+        "Hope this helps!"
+    )
+    mock_completion.return_value = mock_response
+    findings = agent.audit_workflow(sample_bundle)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "AI001"
+    assert findings[0].message == "Shell scripting issue"
