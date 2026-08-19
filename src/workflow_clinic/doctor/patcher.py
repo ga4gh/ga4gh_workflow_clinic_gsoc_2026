@@ -176,17 +176,35 @@ def inject_directive(
     return "".join(lines)
 
 
-def replace_directive_text(code: str, old_text: str, new_text: str) -> str:
-    """Replace exact directive text occurrences safely across source code.
+def replace_directive_text(
+    code: str, old_text: str, new_text: str, process_name: str | None = None
+) -> str:
+    """Replace exact directive text occurrences safely across source code or within a process block.
 
     Args:
         code: Original source code text.
         old_text: Substring to match and replace.
         new_text: Substring to insert in place.
+        process_name: Optional process name to scope the replacement to.
 
     Returns:
         Patched source code string.
     """
     if old_text not in code:
         return code
+
+    if process_name:
+        lines = code.splitlines(keepends=True)
+        start_line, end_line = get_process_line_range(code, process_name)
+        proc_start_idx = max(0, start_line - 1)
+        proc_end_idx = min(len(lines), end_line)
+        proc_text = "".join(lines[proc_start_idx:proc_end_idx])
+        if old_text in proc_text:
+            new_proc_text = proc_text.replace(old_text, new_text, 1)
+            return (
+                "".join(lines[:proc_start_idx])
+                + new_proc_text
+                + "".join(lines[proc_end_idx:])
+            )
+
     return code.replace(old_text, new_text, 1)

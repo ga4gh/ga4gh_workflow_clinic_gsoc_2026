@@ -78,6 +78,20 @@ def test_replace_directive_text() -> None:
     assert patched == 'container "ubuntu:22.04"'
 
 
+def test_replace_directive_text_scoped_to_process() -> None:
+    code = (
+        "// Comment with ubuntu:latest\n"
+        "process FOO {\n"
+        "    container 'ubuntu:latest'\n"
+        "}\n"
+    )
+    patched = replace_directive_text(
+        code, "ubuntu:latest", "ubuntu:22.04", process_name="FOO"
+    )
+    assert "// Comment with ubuntu:latest" in patched
+    assert "container 'ubuntu:22.04'" in patched
+
+
 def test_get_process_line_range_brace_in_script_string() -> None:
     code = """process BASH_HEAVY {
     script:

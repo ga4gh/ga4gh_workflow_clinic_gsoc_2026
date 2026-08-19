@@ -73,7 +73,9 @@ class ResourceASTFixer(BaseFixer):
         if not source_code:
             return None
 
-        process_name = getattr(finding, "location", None)
+        process_name = getattr(finding, "process_name", None) or getattr(
+            finding, "location", None
+        )
         if not process_name and finding.message:
             match = re.search(r"Process ['\"]([^'\"]+)['\"]", finding.message)
             if match:
@@ -105,6 +107,7 @@ class ResourceASTFixer(BaseFixer):
                 proposed_snippet=patched_code,
                 explanation=explanation,
                 strategy_layer=self.strategy_layer,
+                line_number=getattr(finding, "line_number", None),
             )
 
         # Case B: Missing Memory limit
@@ -128,6 +131,7 @@ class ResourceASTFixer(BaseFixer):
                 proposed_snippet=patched_code,
                 explanation=explanation,
                 strategy_layer=self.strategy_layer,
+                line_number=getattr(finding, "line_number", None),
             )
 
         return None

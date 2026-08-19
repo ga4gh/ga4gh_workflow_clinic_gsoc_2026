@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
-from pathlib import Path  # noqa: TC003
+import importlib.util
+from typing import TYPE_CHECKING
 
-from workflow_clinic.doctor.fixers.containers import ContainerASTFixer
-from workflow_clinic.doctor.fixers.resources import ResourceASTFixer
-from workflow_clinic.models.diagnosis import Finding
-from workflow_clinic.parsers.nextflow import NextflowParser
-from workflow_clinic.rules.runner import RuleRunner
+import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+HAS_NEXTFLOW = importlib.util.find_spec("groovy_parser") is not None
+
+if not HAS_NEXTFLOW:
+    pytest.skip("groovy-parser dependency not installed", allow_module_level=True)
+
+from workflow_clinic.doctor.fixers.containers import ContainerASTFixer  # noqa: E402
+from workflow_clinic.doctor.fixers.resources import ResourceASTFixer  # noqa: E402
+from workflow_clinic.models.diagnosis import Finding  # noqa: E402
+from workflow_clinic.parsers.nextflow import NextflowParser  # noqa: E402
+from workflow_clinic.rules.runner import RuleRunner  # noqa: E402
 
 
 def test_container_ast_fixer_missing_container() -> None:
@@ -47,6 +58,24 @@ def test_container_ast_fixer_unpinned_tag() -> None:
     proposal = fixer.generate_proposal(finding, code)
     assert proposal is not None
     assert 'container "ubuntu:22.04"' in proposal.proposed_snippet
+
+
+def test_container_ast_fixer_custom_registry_with_port() -> None:
+    fixer = ContainerASTFixer()
+    finding = Finding(
+        rule_id="W001",
+        severity="warning",
+        message="Process 'PORT_IMAGE' uses an unpinned container image: 'localhost:5000/ubuntu'.",
+        file_path="poor_practices.nf",
+        line_number=10,
+        process_name="PORT_IMAGE",
+    )
+    code = """process PORT_IMAGE {
+    container "localhost:5000/ubuntu"
+}"""
+    proposal = fixer.generate_proposal(finding, code)
+    assert proposal is not None
+    assert 'container "localhost:5000/ubuntu:22.04"' in proposal.proposed_snippet
 
 
 def test_resource_ast_fixer_missing_cpu_and_memory() -> None:
