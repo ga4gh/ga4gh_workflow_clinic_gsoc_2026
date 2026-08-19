@@ -13,18 +13,26 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.table import Table
 
 from workflow_clinic import __version__
+from workflow_clinic.critic import AICriticAgent
+from workflow_clinic.critic.agent import check_model_api_key
 from workflow_clinic.exceptions import (
     InvalidWorkflowError,
     ParserError,
     UnsupportedWorkflowError,
 )
-from workflow_clinic.models.diagnosis import DiagnosisReport
+from workflow_clinic.models.diagnosis import (
+    DiagnosisReport,
+)
+from workflow_clinic.models.diagnosis import (
+    Finding as DiagnosisFinding,
+)
 from workflow_clinic.parsers import ParserRegistry
 from workflow_clinic.reporting import (
     GitHubPublisher,
@@ -128,6 +136,30 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             help="Path to save diagnosis JSON report (default: diagnosis.json).",
         ),
     ] = Path("diagnosis.json"),
+    enhance: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--enhance",
+            "-e",
+            help="Enhance findings with AI Critic remediation advice.",
+        ),
+    ] = False,
+    model: Annotated[
+        str | None,
+        typer.Option(
+            "--model",
+            "-m",
+            help="LiteLLM model string to override default.",
+        ),
+    ] = None,
+    api_key: Annotated[
+        str | None,
+        typer.Option(
+            "--api-key",
+            "-k",
+            help="Explicit API key override. Warning: Shell history might expose keys.",
+        ),
+    ] = None,
 ) -> None:
     """Examine a workflow for portability and cloud-readiness issues."""
     temp_dir_obj = None
@@ -187,32 +219,81 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         )
 
         runner = RuleRunner()
-        findings = runner.run(bundle)
+        raw_findings = runner.run(bundle)
 
-        formatted_findings = []
-        for f in findings:
-            f_dict = f.model_dump()
+        findings = []
+        for f in raw_findings:
             fp = compute_fingerprint(
-                file_path=f.location or target,
+                file_path=target,
                 rule_id=f.rule_id,
                 task_id=f.task_id,
                 target_token=f.message,
             )
+            f_dict = f.model_dump()
+            f_dict["file_path"] = target
             f_dict["fingerprint"] = fp.model_dump()
             f_dict["id"] = fp.hash
-            formatted_findings.append(f_dict)
+            findings.append(DiagnosisFinding.model_validate(f_dict))
 
-        # Export diagnosis.json (always generated per proposal spec)
-        diagnosis_data = {
-            "workflow_name": bundle.metadata.name,
-            "tasks_count": len(bundle.tasks),
-            "findings_count": len(findings),
-            "findings": formatted_findings,
-        }
+        report = DiagnosisReport(
+            workflow_name=bundle.metadata.name,
+            tasks_count=len(bundle.tasks),
+            findings_count=len(findings),
+            findings=findings,
+        )
+
+        is_enhanced = False
+        resolved_model: str | None = None
+        has_key = False
+        enhance_failed = False
+
+        if enhance:
+            load_dotenv(override=False)
+
+            resolved_model = (
+                model or os.getenv("CLINIC_MODEL") or "gemini/gemini-2.5-flash"
+            )
+
+            # Mask API key if logged / traced
+            masked_key = "[MASKED]" if api_key else "None"
+
+            has_key = check_model_api_key(resolved_model, api_key)
+
+            if not has_key:
+                console.print(
+                    f"[yellow]Notice: No LLM API key found for model '{resolved_model}'. Defaulting to local Knowledge Store fallback.[/yellow]"
+                )
+
+            try:
+                agent = AICriticAgent(
+                    model_name=resolved_model,
+                    api_key=api_key,
+                )
+                logger.info(
+                    "Enhancing report with AI Critic using model %s and API key %s",
+                    resolved_model,
+                    masked_key,
+                )
+                enhanced_report = agent.enhance_report(report)
+                if enhanced_report is not None:
+                    report = enhanced_report
+                    is_enhanced = True
+                else:
+                    logger.warning(
+                        "enhance_report returned None. Using unenhanced report."
+                    )
+            except Exception as e:  # noqa: BLE001
+                err_console.print(
+                    f"[yellow]AI Critic enhancement failed: {e}. Using offline fallback.[/yellow]"
+                )
+                enhance_failed = True
+
+        # Export diagnosis.json
         try:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(
-                json.dumps(diagnosis_data, indent=2) + "\n", encoding="utf-8"
+                json.dumps(report.model_dump(mode="json"), indent=2) + "\n",
+                encoding="utf-8",
             )
             console.print(
                 f"[green]✓[/green] Saved diagnosis report to [bold]{escape(str(output))}[/bold]"
@@ -242,9 +323,13 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         table.add_column("Message")
 
         for finding in findings:
-            color = _SEVERITY_COLORS.get(finding.severity, "white")
+            try:
+                sev_enum = Severity(finding.severity.lower())
+                color = _SEVERITY_COLORS.get(sev_enum, "white")
+            except ValueError:
+                color = "white"
             table.add_row(
-                f"[{color}]{finding.severity.value.upper()}[/{color}]",
+                f"[{color}]{finding.severity.upper()}[/{color}]",
                 finding.rule_id,
                 finding.location or "—",
                 finding.message,
@@ -254,13 +339,26 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         console.print(table)
 
         # Summary line
-        n_err = sum(1 for f in findings if f.severity == Severity.ERROR)
-        n_warn = sum(1 for f in findings if f.severity == Severity.WARNING)
-        n_info = sum(1 for f in findings if f.severity == Severity.INFO)
+        n_err = sum(1 for f in findings if f.severity.lower() == "error")
+        n_warn = sum(1 for f in findings if f.severity.lower() == "warning")
+        n_info = sum(1 for f in findings if f.severity.lower() == "info")
         console.print(
             f"\n[bold]Summary:[/bold] {n_err} error(s), "
-            f"{n_warn} warning(s), {n_info} info(s)\n"
+            f"{n_warn} warning(s), {n_info} info(s)"
         )
+
+        if enhance:
+            if enhance_failed:
+                pass
+            elif is_enhanced and has_key:
+                console.print(
+                    f"[green]✓[/green] AI remediation guidance added to {len(findings)}/{len(findings)} findings (model: {resolved_model})"
+                )
+            else:
+                console.print(
+                    f"[green]✓[/green] Offline remediation guidance added to {len(findings)}/{len(findings)} findings (Knowledge Store fallback)"
+                )
+        console.print()
 
         exit_code = 1 if n_err > 0 else 0
         raise typer.Exit(code=exit_code)
