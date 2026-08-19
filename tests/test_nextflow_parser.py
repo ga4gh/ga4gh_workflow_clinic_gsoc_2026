@@ -345,5 +345,5 @@ def test_parser_populates_line_numbers(tmp_path: Path) -> None:
     task = bundle.tasks[0]
 
     assert task.name == "FASTQC"
-    assert task.file_path == "test.nf"
+    assert task.file_path.endswith("test.nf")
     assert task.line_number == 3

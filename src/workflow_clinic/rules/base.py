@@ -35,11 +35,13 @@ class Finding(BaseModel):
     """A single diagnostic finding produced by a rule.
 
     Attributes:
-        rule_id: Unique identifier of the rule that generated this finding.
-        message: Human-readable description of the issue.
+        rule_id: Unique rule identifier (e.g. 'W001').
+        message: Human-readable explanation of the finding.
         severity: Severity level of the finding.
         task_id: ID of the task where the issue was found, if applicable.
-        location: Optional location hint (e.g. process name or directive).
+        process_name: Name of the workflow process or block.
+        file_path: Source file path where the issue was located.
+        line_number: Line number within the source file, if available.
     """
 
     rule_id: str

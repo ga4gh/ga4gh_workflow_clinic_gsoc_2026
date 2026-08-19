@@ -260,7 +260,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         findings = []
         for f in raw_findings:
             fp = compute_fingerprint(
-                file_path=f.file_path or f.process_name or target,
+                file_path=f.file_path or target,
                 rule_id=f.rule_id,
                 task_id=f.task_id,
                 target_token=f.message,

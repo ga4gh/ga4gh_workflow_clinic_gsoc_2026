@@ -274,7 +274,7 @@ class NextflowParser(BaseParser):
                     name=process_name,
                     command=script_text,
                     resources=resources,
-                    file_path=script_file.name,
+                    file_path=str(script_file),
                     line_number=line_number,
                 )
             except (ValueError, ValidationError) as e:
