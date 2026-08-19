@@ -261,9 +261,12 @@ def group_findings(
     # Group findings by category
     grouped: dict[str, list[Finding]] = {}
     for f in findings:
-        cat = getattr(f, "category", None) or _RULE_CATEGORIES.get(
-            f.rule_id, "portability"
-        )
+        if f.rule_id.startswith("AI"):
+            cat = "ai_audit"
+        else:
+            cat = getattr(f, "category", None) or _RULE_CATEGORIES.get(
+                f.rule_id, "portability"
+            )
         grouped.setdefault(cat, []).append(f)
 
     issues: list[GeneratedIssue] = []

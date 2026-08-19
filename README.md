@@ -91,15 +91,20 @@ ruff format .
 ```
 
 
-## AI Critic & Remediation Guidance (AI-Assisted Review)
+### AI Critic & Remediation Guidance (AI-Assisted Review)
 
 Workflow Clinic includes an **AI Critic Agent** to enrich diagnostic findings with AI-powered, cloud-readiness remediation advice.
 
-### Enabling LLM Remediation
-To generate AI remediation advice, run the `examine` command with the `--enhance` (`-e`) flag:
+### Enabling the AI Critic
+To enable the AI to perform a high-level review of your workflow (discovering complex logic bugs, implicit dependencies, or anti-patterns) AND generate detailed remediation advice for all findings, run the `examine` command with the `--enhance` (`-e`) flag:
 ```bash
 workflow-clinic examine main.nf --enhance
 ```
+
+*Note: If no API key is provided, `--enhance` will fall back to using a local knowledge base for basic remediation and will skip the high-level audit discovery phase.*
+
+#### Deduplication & Anti-Hallucination
+The AI Critic is engineered with strict system prompts that feed it all previously discovered static issues (e.g., `W001`, `W002`). This prevents the LLM from duplicating existing findings, forcing it to focus exclusively on discovering complex bugs, shell scripting anti-patterns, and implicit dependencies that static rules miss. It is also strictly instructed not to hallucinate issues just to fill quotas.
 
 ### 🔑 Bring Your Own Key & Model (BYOK & BYOM)
 You can configure any supported LiteLLM model (e.g., OpenAI, Gemini, Anthropic, Groq, Mistral) by setting the respective environment variable.
