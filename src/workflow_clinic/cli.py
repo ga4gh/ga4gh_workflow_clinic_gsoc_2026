@@ -348,7 +348,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         )
         table.add_column("Severity", style="bold", width=10)
         table.add_column("Rule", width=10)
-        table.add_column("Location", width=25)
+        table.add_column("Location", style="cyan", no_wrap=True)
         table.add_column("Process", width=18)
         table.add_column("Message")
 
@@ -359,9 +359,15 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             except ValueError:
                 color = "white"
 
-            loc_str = finding.file_path
-            if finding.line_number:
-                loc_str += f":{finding.line_number}"
+            loc_str = ""
+            if finding.file_path:
+                loc_name = Path(finding.file_path).name
+                loc_str = (
+                    f"{loc_name}:{finding.line_number}"
+                    if finding.line_number
+                    else loc_name
+                )
+
             table.add_row(
                 f"[{color}]{finding.severity.upper()}[/{color}]",
                 finding.rule_id,
