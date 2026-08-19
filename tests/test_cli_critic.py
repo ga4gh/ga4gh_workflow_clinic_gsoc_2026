@@ -399,4 +399,3 @@ def test_resolve_model_raw_api_key_without_model_uses_default(
         monkeypatch.delenv(key, raising=False)
     assert _resolve_model(None, "raw-key") == "gemini/gemini-2.5-flash"
     mock_logger_warning.assert_called_once()
->>>>>>> 1706da0 (fix(critic): resolve model from env and improve fallback)
