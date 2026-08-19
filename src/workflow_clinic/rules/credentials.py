@@ -100,7 +100,9 @@ class HardcodedCredentialsRule(BaseRule):
                             f"environment variable instead."
                         ),
                         task_id=task.id,
-                        location=task.name,
+                        process_name=task.name,
+                        file_path=task.file_path,
+                        line_number=task.line_number,
                     )
                 )
         return findings
@@ -131,7 +133,9 @@ class HardcodedCredentialsRule(BaseRule):
                         f"or environment variable instead."
                     ),
                     task_id=task.id,
-                    location=task.name,
+                    process_name=task.name,
+                    file_path=task.file_path,
+                    line_number=task.line_number,
                 )
             )
         return findings

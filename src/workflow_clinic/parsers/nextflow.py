@@ -228,7 +228,26 @@ class NextflowParser(BaseParser):
 
         return container_image, cpus, memory
 
-    def _parse_processes(self, ast: Any) -> list[Task]:
+    def _find_process_line_number(self, content: str, process_name: str) -> int | None:
+        """Find the 1-based line number of a process declaration, ignoring comments."""
+        # Replace block comments with equal number of newlines to preserve line numbering
+        cleaned = re.sub(
+            r"/\*.*?\*/",
+            lambda m: "\n" * m.group(0).count("\n"),
+            content,
+            flags=re.DOTALL,
+        )
+        # Match process declaration anchored at line start (ignores single-line // comments)
+        match = re.search(
+            r"^[ \t]*process\s+" + re.escape(process_name) + r"\s*\{",
+            cleaned,
+            flags=re.MULTILINE,
+        )
+        if match:
+            return cleaned[: match.start()].count("\n") + 1
+        return None
+
+    def _parse_processes(self, ast: Any, script_file: Path, content: str) -> list[Task]:
         """Traverse the AST to extract processes and map them to Task structures."""
         tasks = []
         processes = self._collect_processes(ast)
@@ -239,6 +258,8 @@ class NextflowParser(BaseParser):
             )
             if not process_name:
                 continue
+
+            line_number = self._find_process_line_number(content, process_name)
 
             container_image, cpus, memory = self._extract_directives(p)
 
@@ -265,6 +286,8 @@ class NextflowParser(BaseParser):
                     name=process_name,
                     command=script_text,
                     resources=resources,
+                    file_path=str(script_file),
+                    line_number=line_number,
                 )
             except (ValueError, ValidationError) as e:
                 msg = f"Invalid resource values in process '{process_name}': {e}"
@@ -304,7 +327,7 @@ class NextflowParser(BaseParser):
             msg = f"Failed to parse Nextflow file {script_file}: {e}"
             raise ParserError(msg) from e
 
-        tasks = self._parse_processes(ast)
+        tasks = self._parse_processes(ast, script_file, content)
 
         # Recursively follow DSL2 include statements
         base_dir = script_file.parent

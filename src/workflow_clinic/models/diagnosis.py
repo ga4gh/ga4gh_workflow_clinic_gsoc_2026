@@ -44,7 +44,7 @@ class Finding(BaseModel):
     line_number: int | None = Field(
         default=None, description="Optional line number where issue was detected"
     )
-    location: str | None = Field(
+    process_name: str | None = Field(
         default=None, description="Optional location hint from examine output"
     )
     message: str | None = Field(
@@ -78,9 +78,13 @@ class Finding(BaseModel):
                     raise ValueError(msg)
                 data["severity"] = sev
 
-            # Normalize location to file_path
+            # Normalize location to file_path and process_name for backward compatibility
             if not data.get("file_path"):
-                data["file_path"] = data.get("location") or "main.nf"
+                data["file_path"] = (
+                    data.get("location") or data.get("process_name") or "main.nf"
+                )
+            if not data.get("process_name") and data.get("location"):
+                data["process_name"] = data["location"]
 
             # Normalize message to title
             if not data.get("title"):

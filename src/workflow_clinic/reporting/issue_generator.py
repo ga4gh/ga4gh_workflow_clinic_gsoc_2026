@@ -199,7 +199,7 @@ def _build_category_issue_body(
         loc = (
             f.file_path
             if getattr(f, "file_path", None)
-            else (getattr(f, "location", None) or "global")
+            else (getattr(f, "process_name", None) or "global")
         )
         line_str = (
             f" (Line {f.line_number})"

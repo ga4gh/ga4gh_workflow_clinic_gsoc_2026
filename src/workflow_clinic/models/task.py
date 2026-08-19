@@ -62,6 +62,8 @@ class Task(BaseModel):
     resources: TaskResources = Field(default_factory=TaskResources)
     inputs: list[str] = Field(default_factory=list)
     outputs: list[str] = Field(default_factory=list)
+    file_path: str = ""
+    line_number: int | None = None
 
     @field_validator("id")
     @classmethod

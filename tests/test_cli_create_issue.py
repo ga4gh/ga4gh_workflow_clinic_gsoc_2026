@@ -213,7 +213,8 @@ def test_create_issue_real_examine_output(tmp_path: Path) -> None:
                 "rule_id": "W001",
                 "severity": "warning",
                 "message": "Unpinned container tag in process FASTQC",
-                "location": "modules/fastqc.nf",
+                "file_path": "modules/fastqc.nf",
+                "process_name": "FASTQC",
                 "task_id": "FASTQC",
                 "fingerprint": {
                     "hash": "1111111111111111111111111111111111111111111111111111111111111111"

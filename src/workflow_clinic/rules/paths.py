@@ -91,7 +91,9 @@ class HardcodedPathRule(BaseRule):
                                     f"in cloud environments."
                                 ),
                                 task_id=task.id,
-                                location=task.name,
+                                process_name=task.name,
+                                file_path=task.file_path,
+                                line_number=task.line_number,
                             )
                         )
 

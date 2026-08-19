@@ -37,7 +37,7 @@ class DummyTestRule(BaseRule):
                 message="Mock finding",
                 severity=Severity.INFO,
                 task_id=bundle.tasks[0].id,
-                location=bundle.tasks[0].name,
+                process_name=bundle.tasks[0].name,
             )
         ]
 
@@ -390,7 +390,7 @@ def test_rules_end_to_end_with_fixtures() -> None:
     assert len(infos) == 1
 
     # Processes check
-    processes_with_issues = {f.location for f in findings_poor if f.location}
+    processes_with_issues = {f.process_name for f in findings_poor if f.process_name}
     assert processes_with_issues == {
         "NO_CONTAINER",
         "UNPINNED_TAG",
@@ -546,10 +546,10 @@ def test_hardcoded_credentials_rule_integration() -> None:
         if "AWS Access Key" in f.message and "AKIAIOSF" in f.message
     )
     assert aws_finding.severity == Severity.ERROR
-    assert aws_finding.location == "USES_AWS_KEY"
+    assert aws_finding.process_name == "USES_AWS_KEY"
 
     entropy_finding = next(
         f for f in findings_creds if "high-entropy value" in f.message
     )
     assert entropy_finding.severity == Severity.WARNING
-    assert entropy_finding.location == "USES_GENERIC_HIGH_ENTROPY_SECRET"
+    assert entropy_finding.process_name == "USES_GENERIC_HIGH_ENTROPY_SECRET"

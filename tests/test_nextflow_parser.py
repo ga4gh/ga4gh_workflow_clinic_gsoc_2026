@@ -330,3 +330,46 @@ def test_parse_dummy_nf_fixture() -> None:
     )
     assert fastqc.resources.cpus == 2
     assert fastqc.resources.memory == "4"  # Evaluates closure to first numeric literal
+
+
+def test_parser_populates_line_numbers(tmp_path: Path) -> None:
+    """Verify line numbers match actual process declarations in source."""
+    content = "\n\nprocess FASTQC {\n    cpus 2\n}\n"
+    nf_file = tmp_path / "test.nf"
+    nf_file.write_text(content)
+
+    parser = NextflowParser()
+    bundle = parser.parse(nf_file)
+
+    assert len(bundle.tasks) == 1
+    task = bundle.tasks[0]
+
+    assert task.name == "FASTQC"
+    assert task.file_path.endswith("test.nf")
+    assert task.line_number == 3
+
+
+def test_parser_ast_line_numbers_with_comments(tmp_path: Path) -> None:
+    """Verify AST line extraction is accurate even when comments contain process keywords."""
+    content = (
+        "// Documentation mentioning process FAKE_PROCESS { ... }\n"
+        "/* Multiline block comment\n"
+        "   process ANOTHER_FAKE {\n"
+        "*/\n"
+        "\n"
+        "process REAL_PROCESS {\n"
+        "    cpus 4\n"
+        "    script:\n"
+        '    "echo real"\n'
+        "}\n"
+    )
+    nf_file = tmp_path / "comment_test.nf"
+    nf_file.write_text(content)
+
+    parser = NextflowParser()
+    bundle = parser.parse(nf_file)
+
+    assert len(bundle.tasks) == 1
+    task = bundle.tasks[0]
+    assert task.name == "REAL_PROCESS"
+    assert task.line_number == 6
