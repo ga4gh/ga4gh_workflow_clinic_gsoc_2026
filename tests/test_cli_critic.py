@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from workflow_clinic.cli import app
+from workflow_clinic.cli import PROVIDER_MODEL_MAP, _resolve_model, app
 from workflow_clinic.critic.agent import AICriticAgent, check_model_api_key
 
 runner = CliRunner()
@@ -67,6 +67,7 @@ def test_examine_with_enhance_offline_fallback(
         "MISTRAL_API_KEY",
         "COHERE_API_KEY",
         "GROQ_API_KEY",
+        "CLINIC_MODEL",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -344,3 +345,57 @@ def test_examine_with_mismatched_api_key_falls_back(
     mock_completion.assert_not_called()
     assert "No LLM API key found for model 'anthropic/claude-3'" in result.output
     assert "Knowledge Store fallback" in result.output
+
+
+@pytest.mark.parametrize(
+    ("env_var", "expected_model"),
+    [
+        ("GEMINI_API_KEY", "gemini/gemini-2.5-flash"),
+        ("OPENAI_API_KEY", "gpt-4o-mini"),
+        ("ANTHROPIC_API_KEY", "claude-3-5-sonnet-20240620"),
+        ("MISTRAL_API_KEY", "mistral/mistral-large-latest"),
+        ("GROQ_API_KEY", "groq/llama-3.1-8b-instant"),
+        ("COHERE_API_KEY", "cohere/command-r"),
+    ],
+)
+def test_resolve_model_auto_detects_from_env(
+    env_var: str, expected_model: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify model auto-selection picks correct model for each provider key."""
+    for key, _ in PROVIDER_MODEL_MAP:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv(env_var, "fake-key")
+    assert _resolve_model(None, None) == expected_model
+
+
+def test_resolve_model_cli_flag_takes_priority_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify --model flag overrides env var and auto-detection."""
+    for key, _ in PROVIDER_MODEL_MAP:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("CLINIC_MODEL", "gpt-3.5-turbo")
+    assert _resolve_model("gpt-4o", None) == "gpt-4o"
+
+
+def test_resolve_model_clinic_env_var_takes_priority_over_auto_detect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify CLINIC_MODEL env var overrides auto-detection."""
+    for key, _ in PROVIDER_MODEL_MAP:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("CLINIC_MODEL", "gpt-3.5-turbo")
+    assert _resolve_model(None, None) == "gpt-3.5-turbo"
+
+
+@patch("workflow_clinic.cli.logger.warning")
+def test_resolve_model_raw_api_key_without_model_uses_default(
+    mock_logger_warning: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify raw --api-key without --model logs warning and uses default."""
+    for key, _ in PROVIDER_MODEL_MAP:
+        monkeypatch.delenv(key, raising=False)
+    assert _resolve_model(None, "raw-key") == "gemini/gemini-2.5-flash"
+    mock_logger_warning.assert_called_once()

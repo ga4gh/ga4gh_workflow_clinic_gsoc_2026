@@ -107,12 +107,18 @@ You can configure any supported LiteLLM model (e.g., OpenAI, Gemini, Anthropic, 
 #### Configuration via `.env` file (Recommended)
 Create a `.env` file in your working directory to permanently save configuration details:
 ```env
-GEMINI_API_KEY="your-gemini-api-key"
-CLINIC_MODEL="gemini/gemini-2.5-flash"
+OPENAI_API_KEY="sk-proj-..."
+# CLINIC_MODEL="gpt-4o"  # Optional: Overrides the auto-detected default model
+```
+
+**Model Auto-Detection:** The AI Critic automatically resolves the appropriate default model based on which API key is present in your environment (e.g., `OPENAI_API_KEY` defaults to `gpt-4o-mini`).
+To view all supported providers and their default models, run:
+```bash
+workflow-clinic list-models
 ```
 
 #### CLI Options
-You can temporarily override settings directly on the command line:
+You can temporarily override the default model directly on the command line:
 ```bash
 workflow-clinic examine main.nf --enhance --model gpt-4o --api-key sk-proj-...
 ```
