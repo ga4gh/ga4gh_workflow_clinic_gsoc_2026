@@ -785,7 +785,7 @@ def fix(  # noqa: C901, PLR0912, PLR0915
     token_val = token or os.getenv("GITHUB_TOKEN")
     repo_val = repo or os.getenv("GITHUB_REPOSITORY")
 
-    if token_val or repo_val:
+    if repo_val or token:
         if not token_val:
             err_console.print(
                 "[red]Error:[/red] GitHub repository specified but GitHub token is missing. Provide via --token or GITHUB_TOKEN."
