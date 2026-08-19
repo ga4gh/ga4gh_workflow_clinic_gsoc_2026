@@ -265,9 +265,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         if enhance:
             load_dotenv(override=False)
             resolved_model = _resolve_model(model, api_key)
-            has_key = bool(api_key) or any(
-                bool(os.getenv(env_var)) for env_var, _ in PROVIDER_MODEL_MAP
-            )
+            has_key = check_model_api_key(resolved_model, api_key)
 
         if enhance:
             if not has_key:

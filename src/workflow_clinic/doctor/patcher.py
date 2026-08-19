@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import re
 
-from groovy_parser.parser import parse_and_digest_groovy_content
-from lark.exceptions import LarkError
+try:
+    from groovy_parser.parser import parse_and_digest_groovy_content
+    from lark.exceptions import LarkError
+
+    _HAS_GROOVY_PARSER = True
+except ImportError:
+    _HAS_GROOVY_PARSER = False
 
 
 def get_process_line_range(  # noqa: C901, PLR0912, PLR0915
@@ -26,21 +31,22 @@ def get_process_line_range(  # noqa: C901, PLR0912, PLR0915
     lines = code.splitlines()
 
     # Try AST extraction first
-    try:
-        ast, _ = parse_and_digest_groovy_content(code)
-        if isinstance(ast, list):
-            for node in ast:
-                if (
-                    isinstance(node, dict)
-                    and node.get("type") == "process"
-                    and node.get("name") == process_name
-                ):
-                    start = node.get("start_line") or node.get("line_number")
-                    end = node.get("end_line")
-                    if start and end:
-                        return (int(start), int(end))
-    except (LarkError, Exception):  # noqa: BLE001, S110
-        pass
+    if _HAS_GROOVY_PARSER:
+        try:
+            ast, _ = parse_and_digest_groovy_content(code)
+            if isinstance(ast, list):
+                for node in ast:
+                    if (
+                        isinstance(node, dict)
+                        and node.get("type") == "process"
+                        and node.get("name") == process_name
+                    ):
+                        start = node.get("start_line") or node.get("line_number")
+                        end = node.get("end_line")
+                        if start and end:
+                            return (int(start), int(end))
+        except (LarkError, Exception):  # noqa: BLE001, S110
+            pass
 
     # Regex fallback with string-aware brace matching
     process_pattern = re.compile(

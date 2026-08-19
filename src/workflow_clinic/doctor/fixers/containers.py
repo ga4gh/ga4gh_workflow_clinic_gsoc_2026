@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from workflow_clinic.doctor.base import BaseFixer
+from workflow_clinic.doctor.base import BaseFixer, FixerRegistry
 from workflow_clinic.doctor.patcher import inject_directive, replace_directive_text
 from workflow_clinic.models.fix import FixProposal, FixStrategyLayer
 
@@ -19,6 +19,7 @@ DEFAULT_CONTAINER = "quay.io/biocontainers/ubuntu:22.04"
 DEFAULT_PINNED_TAG = "22.04"
 
 
+@FixerRegistry.register
 class ContainerASTFixer(BaseFixer):
     """Layer 1 AST Fixer for Rule W001 (Containers)."""
 
@@ -37,7 +38,7 @@ class ContainerASTFixer(BaseFixer):
         """
         return finding.rule_id == "W001"
 
-    def generate_proposal(  # noqa: C901
+    def generate_proposal(  # noqa: C901, PLR0912
         self,
         finding: Finding,
         bundle: WorkflowBundle | None = None,
@@ -66,8 +67,14 @@ class ContainerASTFixer(BaseFixer):
 
         if not source_code and target_file:
             file_p = Path(target_file)
+            if not file_p.exists() and (Path.cwd() / file_p).exists():
+                file_p = Path.cwd() / file_p
+            if not file_p.exists():
+                matches = list(Path.cwd().glob(f"**/{file_p.name}"))
+                if matches:
+                    file_p = matches[0]
             if file_p.exists():
-                source_code = file_p.read_text()
+                source_code = file_p.read_text(encoding="utf-8")
 
         if not source_code:
             return None
