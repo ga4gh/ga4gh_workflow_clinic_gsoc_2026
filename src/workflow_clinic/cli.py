@@ -21,6 +21,7 @@ from rich.table import Table
 
 from workflow_clinic import __version__
 from workflow_clinic.critic import AICriticAgent
+from workflow_clinic.critic.agent import check_model_api_key
 from workflow_clinic.exceptions import (
     InvalidWorkflowError,
     ParserError,
@@ -256,21 +257,11 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             # Mask API key if logged / traced
             masked_key = "[MASKED]" if api_key else "None"
 
-            has_key = bool(api_key) or any(
-                bool(os.getenv(k))
-                for k in [
-                    "GEMINI_API_KEY",
-                    "OPENAI_API_KEY",
-                    "ANTHROPIC_API_KEY",
-                    "MISTRAL_API_KEY",
-                    "COHERE_API_KEY",
-                    "GROQ_API_KEY",
-                ]
-            )
+            has_key = check_model_api_key(resolved_model, api_key)
 
             if not has_key:
                 console.print(
-                    "[yellow]Notice: No LLM API key found. Defaulting to local Knowledge Store fallback.[/yellow]"
+                    f"[yellow]Notice: No LLM API key found for model '{resolved_model}'. Defaulting to local Knowledge Store fallback.[/yellow]"
                 )
 
             try:

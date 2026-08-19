@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from workflow_clinic.cli import app
-from workflow_clinic.critic.agent import AICriticAgent
+from workflow_clinic.critic.agent import AICriticAgent, check_model_api_key
 
 runner = CliRunner()
 HAS_NEXTFLOW = importlib.util.find_spec("groovy_parser") is not None
@@ -276,3 +276,71 @@ def test_examine_with_enhance_api_key_not_logged(
     ]
     assert not any("sk-supersecret-key-12345" in msg for msg in all_log_args)
     assert any("[MASKED]" in msg for msg in all_log_args)
+
+
+def test_check_model_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify check_model_api_key strictly validates provider-specific keys."""
+    # Clear all keys first
+    for k in [
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MISTRAL_API_KEY",
+        "COHERE_API_KEY",
+        "GROQ_API_KEY",
+    ]:
+        monkeypatch.delenv(k, raising=False)
+
+    # Explicit key always passes
+    assert check_model_api_key("anthropic/claude-3", explicit_key="sk-test") is True
+
+    # With only OPENAI_API_KEY set
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    assert check_model_api_key("gpt-4o") is True
+    assert check_model_api_key("openai/gpt-4o") is True
+    assert check_model_api_key("anthropic/claude-3") is False
+    assert check_model_api_key("gemini/gemini-2.5-flash") is False
+
+    # With ANTHROPIC_API_KEY set
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
+    assert check_model_api_key("anthropic/claude-3") is True
+    assert check_model_api_key("claude-3-5-sonnet") is True
+
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
+@patch("workflow_clinic.critic.agent.litellm.completion")
+def test_examine_with_mismatched_api_key_falls_back(
+    mock_completion: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify that setting an unmatching key (e.g. OPENAI for anthropic) triggers fallback notice."""
+    for key in [
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MISTRAL_API_KEY",
+        "COHERE_API_KEY",
+        "GROQ_API_KEY",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-key")
+
+    diag_file = tmp_path / "diagnosis_test.json"
+    result = runner.invoke(
+        app,
+        [
+            "examine",
+            "tests/fixtures/poor_practices.nf",
+            "-o",
+            str(diag_file),
+            "--enhance",
+            "--model",
+            "anthropic/claude-3",
+        ],
+    )
+    assert result.exit_code != 0
+    mock_completion.assert_not_called()
+    assert "No LLM API key found for model 'anthropic/claude-3'" in result.output
+    assert "Knowledge Store fallback" in result.output
