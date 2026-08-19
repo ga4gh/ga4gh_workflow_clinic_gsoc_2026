@@ -228,6 +228,25 @@ class NextflowParser(BaseParser):
 
         return container_image, cpus, memory
 
+    def _find_process_line_number(self, content: str, process_name: str) -> int | None:
+        """Find the 1-based line number of a process declaration, ignoring comments."""
+        # Replace block comments with equal number of newlines to preserve line numbering
+        cleaned = re.sub(
+            r"/\*.*?\*/",
+            lambda m: "\n" * m.group(0).count("\n"),
+            content,
+            flags=re.DOTALL,
+        )
+        # Match process declaration anchored at line start (ignores single-line // comments)
+        match = re.search(
+            r"^[ \t]*process\s+" + re.escape(process_name) + r"\s*\{",
+            cleaned,
+            flags=re.MULTILINE,
+        )
+        if match:
+            return cleaned[: match.start()].count("\n") + 1
+        return None
+
     def _parse_processes(self, ast: Any, script_file: Path, content: str) -> list[Task]:
         """Traverse the AST to extract processes and map them to Task structures."""
         tasks = []
@@ -240,14 +259,7 @@ class NextflowParser(BaseParser):
             if not process_name:
                 continue
 
-            line_number = None
-            match = re.search(
-                r"^[ \t]*process\s+" + re.escape(process_name) + r"\s*\{",
-                content,
-                flags=re.MULTILINE,
-            )
-            if match:
-                line_number = content[: match.start()].count("\n") + 1
+            line_number = self._find_process_line_number(content, process_name)
 
             container_image, cpus, memory = self._extract_directives(p)
 
