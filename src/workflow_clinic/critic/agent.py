@@ -119,7 +119,11 @@ class AICriticAgent:
     def _fallback_remediation(
         self, finding: Finding, kb_sections: list[str] | None = None
     ) -> tuple[Remediation, bool]:
-        """Construct a structured Remediation directly from the TOML Knowledge Store."""
+        """Construct a structured Remediation directly from the TOML Knowledge Store.
+
+        Returns:
+            Tuple of (Remediation, is_fallback=True).
+        """
         sections = (
             kb_sections
             if kb_sections is not None
@@ -183,7 +187,7 @@ Return ONLY valid JSON.
             finding: Target Finding model instance to enhance.
 
         Returns:
-            Remediation instance containing summary, explanation, and optional code_example.
+            Tuple of (Remediation, is_fallback) where is_fallback is True if local TOML fallback was used.
         """
         # Fetch TOML knowledge base context
         kb_sections = self.knowledge_store.retrieve(finding.rule_id)

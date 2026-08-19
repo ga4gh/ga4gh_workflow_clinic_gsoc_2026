@@ -308,13 +308,9 @@ def examine(  # noqa: C901, PLR0912, PLR0915
                     resolved_model,
                     masked_key,
                 )
-                enhanced_report, fallback_count = agent.enhance_report(report)
-                if enhanced_report is not None:
-                    report = enhanced_report
-                else:
-                    logger.warning(
-                        "enhance_report returned None. Using unenhanced report."
-                    )
+                result = agent.enhance_report(report)
+                report = result.report
+                fallback_count = result.fallback_count
             except Exception as e:  # noqa: BLE001
                 err_console.print(
                     f"[yellow]AI Critic enhancement failed: {e}. Using offline fallback.[/yellow]"
@@ -383,7 +379,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         if enhance:
             if enhance_failed:
                 err_console.print(
-                    f"[yellow]⚠️  AI Critic Enhancement Failed: Could not reach LLM. "
+                    f"[yellow]⚠️  AI Critic Enhancement Failed: Using offline Knowledge Store. "
                     f"All {len(findings)} findings using offline Knowledge Store.[/yellow]"
                 )
             elif not has_key:
