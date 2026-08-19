@@ -22,6 +22,7 @@ from rich.table import Table
 from workflow_clinic import __version__
 from workflow_clinic.critic import AICriticAgent
 from workflow_clinic.critic.agent import check_model_api_key
+from workflow_clinic.doctor import DoctorRunner
 from workflow_clinic.exceptions import (
     InvalidWorkflowError,
     ParserError,
@@ -711,3 +712,204 @@ def create_issue(  # noqa: C901, PLR0912, PLR0915
                 f"[red]Error:[/red] Could not write issue file to '{escape(str(output))}': {escape(str(e))}"
             )
             raise typer.Exit(code=1) from e
+
+
+@app.command(name="fix")
+def fix(  # noqa: C901, PLR0912, PLR0915
+    target: Annotated[
+        str,
+        typer.Argument(
+            help="Path to local workflow directory, diagnosis.json file, or target repository.",
+        ),
+    ] = ".",
+    rule: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--rule",
+            "-r",
+            help="Filter fix proposals to specific rule IDs (e.g. -r W001 -r W002).",
+        ),
+    ] = None,
+    all_issues: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--all",
+            "-y",
+            help="Select all findings to fix without interactive prompt.",
+        ),
+    ] = False,
+    dry_run: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Render proposed code diffs and dry-run summary without modifying files on disk.",
+        ),
+    ] = False,
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            "-t",
+            help="GitHub Personal Access Token (PAT). Overrides GITHUB_TOKEN env var.",
+        ),
+    ] = None,
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo",
+            help="Target GitHub repository in 'owner/repo' format. Overrides GITHUB_REPOSITORY env var.",
+        ),
+    ] = None,
+) -> None:
+    """Automated Workflow Doctor engine for repairing diagnostic findings in Nextflow & Snakemake pipelines."""
+    target_path = Path(target).resolve()
+    diag_path = target_path if target_path.is_file() else target_path / "diagnosis.json"
+    root_dir = diag_path.parent if diag_path.is_file() else target_path
+
+    if not diag_path.exists():
+        err_console.print(
+            f"[red]Error:[/red] Could not find '[bold]{diag_path.name}[/bold]' at '{escape(str(diag_path.parent))}'."
+        )
+        err_console.print(
+            f"[bold]Tip:[/bold] Run [green]workflow-clinic examine {escape(target)}[/green] first to generate diagnostic findings."
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        raw_json = json.loads(diag_path.read_text(encoding="utf-8"))
+        report = DiagnosisReport.model_validate(raw_json)
+    except Exception as e:
+        err_console.print(
+            f"[red]Error:[/red] Failed to parse diagnosis report '{escape(str(diag_path))}': {escape(str(e))}"
+        )
+        raise typer.Exit(code=1) from e
+
+    token_val = token or os.getenv("GITHUB_TOKEN")
+    repo_val = repo or os.getenv("GITHUB_REPOSITORY")
+
+    if token_val or repo_val:
+        if not token_val:
+            err_console.print(
+                "[red]Error:[/red] GitHub repository specified but GitHub token is missing. Provide via --token or GITHUB_TOKEN."
+            )
+            raise typer.Exit(code=1)
+        if not repo_val:
+            err_console.print(
+                "[red]Error:[/red] GitHub token specified but repository is missing. Provide via --repo or GITHUB_REPOSITORY."
+            )
+            raise typer.Exit(code=1)
+
+        try:
+            publisher = GitHubPublisher(token=token_val, repository=repo_val)
+            active_fps = publisher.fetch_active_fingerprints()
+            if active_fps:
+                logger.info(
+                    "Fetched %d active fingerprints from GitHub repository %s",
+                    len(active_fps),
+                    repo_val,
+                )
+        except GitHubPublisherError as e:
+            err_console.print(
+                f"[red]GitHub Authentication/API Error:[/red] {escape(str(e))}"
+            )
+            raise typer.Exit(code=1) from e
+
+    findings = report.findings
+    if not findings:
+        console.print("\n[bold green]✓[/bold green] No actionable findings to fix!\n")
+        raise typer.Exit(code=0)
+
+    if rule:
+        rule_set = {r.upper() for r in rule}
+        findings = [f for f in findings if f.rule_id.upper() in rule_set]
+        if not findings:
+            console.print(
+                f"\n[bold yellow]![/bold yellow] No findings matching rule filter(s): {', '.join(rule_set)}\n"
+            )
+            raise typer.Exit(code=0)
+
+    # Group findings by Category domain for interactive selection
+    grouped_findings: dict[str, list] = {}
+    for f in findings:
+        grouped_findings.setdefault(f.category, []).append(f)
+
+    categories = list(grouped_findings.keys())
+
+    # Determine selected findings
+    is_tty = sys.stdin.isatty()
+    if all_issues or not is_tty:
+        if not is_tty and not all_issues:
+            console.print(
+                "[yellow]Non-interactive terminal detected — auto-selecting all findings for fix.[/yellow]"
+            )
+        selected_findings = findings
+    else:
+        table = Table(
+            title=f"Diagnostic Categories to Repair for '{report.workflow_name}'",
+            show_lines=True,
+        )
+        table.add_column("Option", style="bold cyan", width=8)
+        table.add_column("Category Domain", width=25)
+        table.add_column("Findings Count", style="bold yellow", width=16)
+
+        for idx, cat in enumerate(categories, 1):
+            cat_count = len(grouped_findings[cat])
+            table.add_row(
+                f"[{idx}]",
+                cat.replace("_", " ").title(),
+                f"{cat_count} issue(s)",
+            )
+
+        console.print()
+        console.print(table)
+
+        prompt_msg = (
+            f"Select category domains to fix (e.g. 1,{len(categories)} or all) [all]"
+        )
+        raw_input_str = typer.prompt(prompt_msg, default="all")
+        selected_indices = parse_selection(raw_input_str, len(categories))
+        if not selected_indices:
+            err_console.print(
+                "[yellow]No valid category domains selected. Exiting.[/yellow]"
+            )
+            raise typer.Exit(code=0)
+
+        selected_categories = {categories[i] for i in selected_indices}
+        selected_findings = [f for f in findings if f.category in selected_categories]
+
+    runner = DoctorRunner()
+    session = runner.run(selected_findings, root_dir=root_dir, dry_run=dry_run)
+
+    if not session.proposals:
+        console.print(
+            "\n[bold yellow]![/bold yellow] No registered fixers available for the selected findings yet.\n"
+        )
+        raise typer.Exit(code=0)
+
+    if dry_run:
+        console.print(
+            f"\n[cyan]--- Workflow Doctor Dry Run ({len(session.proposals)} proposed fix(es)) ---[/cyan]\n"
+        )
+        diff_table = Table(show_lines=True)
+        diff_table.add_column("Rule", style="bold cyan", width=10)
+        diff_table.add_column("Target File", width=25)
+        diff_table.add_column("Layer Strategy", style="bold yellow", width=15)
+        diff_table.add_column("Rationale", overflow="fold")
+
+        for prop in session.proposals:
+            diff_table.add_row(
+                prop.rule_id,
+                prop.target_file,
+                prop.strategy_layer.name,
+                prop.explanation,
+            )
+
+        console.print(diff_table)
+        console.print(
+            f"\n[bold green]✓[/bold green] Dry-run complete for session [bold cyan]{session.session_id[:8]}[/bold cyan] ({len(session.proposals)} proposal(s) ready).\n"
+        )
+        raise typer.Exit(code=0)
+
+    console.print(
+        f"\n[bold green]✓[/bold green] Workflow Doctor completed session [bold cyan]{session.session_id[:8]}[/bold cyan]: {session.applied_count}/{len(session.proposals)} fix(es) applied successfully.\n"
+    )
