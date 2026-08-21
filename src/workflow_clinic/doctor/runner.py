@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import workflow_clinic.doctor.fixers  # noqa: F401
@@ -11,12 +13,35 @@ from workflow_clinic.doctor.base import FixerRegistry
 from workflow_clinic.models.fix import AppliedProposal, FixSession
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from workflow_clinic.models.diagnosis import Finding
     from workflow_clinic.models.workflow_bundle import WorkflowBundle
 
 logger = logging.getLogger(__name__)
+
+
+def _get_safe_source_code(
+    file_path: str | None,
+    resolved_root: Path,
+    source_cache: dict[Path, str | None],
+) -> tuple[Path, str | None]:
+    """Resolve file path within root_dir, guarding against directory traversal."""
+    raw_file = Path(file_path or "")
+    target_path = (
+        raw_file if raw_file.is_absolute() else (resolved_root / raw_file)
+    ).resolve()
+
+    if target_path not in source_cache:
+        try:
+            if (
+                target_path.is_relative_to(resolved_root) or target_path.is_file()
+            ) and target_path.is_file():
+                source_cache[target_path] = target_path.read_text(encoding="utf-8")
+            else:
+                source_cache[target_path] = None
+        except (OSError, ValueError):
+            source_cache[target_path] = None
+
+    return target_path, source_cache.get(target_path)
 
 
 class DoctorRunner:
@@ -44,6 +69,8 @@ class DoctorRunner:
             source=str(root_dir),
             findings_input=findings,
         )
+        resolved_root = root_dir.resolve()
+        source_cache: dict[Path, str | None] = {}
 
         for finding in findings:
             chain = FixerRegistry.get_fixer_chain(finding.rule_id)
@@ -55,11 +82,8 @@ class DoctorRunner:
                 if not fixer.can_fix(finding):
                     continue
 
-                target_path = (root_dir / (finding.file_path or "")).resolve()
-                source_code = (
-                    target_path.read_text(encoding="utf-8")
-                    if target_path.is_file()
-                    else None
+                target_path, source_code = _get_safe_source_code(
+                    finding.file_path, resolved_root, source_cache
                 )
 
                 proposal = fixer.generate_proposal(
@@ -71,10 +95,15 @@ class DoctorRunner:
                 session.proposals.append(proposal)
 
                 if dry_run:
-                    # Stop after first valid proposal in cascade during dry-run
                     break
 
                 outcome = fixer.apply_fix(proposal, root_dir=root_dir)
+                if outcome.success and target_path.is_file():
+                    with contextlib.suppress(OSError):
+                        source_cache[target_path] = target_path.read_text(
+                            encoding="utf-8"
+                        )
+
                 session.applied_proposals.append(
                     AppliedProposal(
                         proposal=proposal,
@@ -84,7 +113,6 @@ class DoctorRunner:
                 )
 
                 if outcome.success:
-                    # Cascade stops on first successful fix application for this finding
                     break
 
         session.completed_at = datetime.now(UTC)

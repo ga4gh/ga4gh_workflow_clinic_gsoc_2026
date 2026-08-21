@@ -86,18 +86,23 @@ def _mask_and_parameterize_secrets(
         match = pattern.search(block_text)
         if match:
             matched_str = match.group(0)
+            replacement_expr = re.sub(
+                r"\bparams\.([A-Za-z0-9_]+)\b",
+                r"${params.\1}",
+                replacement,
+            )
             lines = block_text.splitlines(keepends=True)
             for i, line in enumerate(lines):
                 if matched_str in line:
                     stripped = line.rstrip("\r\n")
                     ending = line[len(stripped) :]
-                    new_line = stripped.replace(matched_str, replacement, 1)
+                    new_line = stripped.replace(matched_str, replacement_expr, 1)
                     if "Rotate this credential" not in new_line:
                         new_line = f"{new_line}  // TODO: Rotate this credential immediately — it was exposed in workflow code"
                     lines[i] = new_line + ending
                     return (
                         "".join(lines),
-                        f"Mask and parameterize hardcoded {vendor_name} to '{replacement}'. Rotate this credential immediately.",
+                        f"Mask and parameterize hardcoded {vendor_name} to '{replacement_expr}'. Rotate this credential immediately.",
                     )
 
     # Check generic assignments
@@ -111,7 +116,7 @@ def _mask_and_parameterize_secrets(
                 stripped = line.rstrip("\r\n")
                 ending = line[len(stripped) :]
                 new_line = stripped.replace(
-                    full_match, f"{key_name} = params.{key_name.lower()}", 1
+                    full_match, f"{key_name} = ${{params.{key_name.lower()}}}", 1
                 )
                 if "Rotate this credential" not in new_line:
                     new_line = f"{new_line}  // TODO: Rotate this credential immediately — it was exposed in workflow code"

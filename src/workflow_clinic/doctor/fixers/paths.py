@@ -89,16 +89,30 @@ def _find_absolute_path_target(finding: Finding, source_code: str) -> str | None
 
 
 def _replace_path_with_param(code: str, path_str: str, param_name: str) -> str:
-    """Safely replace single-quoted, double-quoted, or raw path in code string."""
+    """Safely replace single-quoted, double-quoted, or raw path in code string with context awareness."""
     quoted_single = f"'{path_str}'"
     quoted_double = f'"{path_str}"'
 
+    # Check for DSL file() expression: keep file(params.x)
+    if f"file({quoted_single})" in code:
+        return code.replace(f"file({quoted_single})", f"file({param_name})")
+    if f"file({quoted_double})" in code:
+        return code.replace(f"file({quoted_double})", f"file({param_name})")
+
+    # If inside script: block or quoted in bash, interpolate with ${params.x}
+    script_param = (
+        f"${{{param_name}}}" if not param_name.startswith("${") else param_name
+    )
+    is_script = "script:" in code or '"""' in code
+    quoted_repl = f'"{script_param}"' if is_script else param_name
+    raw_repl = script_param if is_script else param_name
+
     if quoted_single in code:
-        return code.replace(quoted_single, param_name)
+        return code.replace(quoted_single, quoted_repl)
     if quoted_double in code:
-        return code.replace(quoted_double, param_name)
+        return code.replace(quoted_double, quoted_repl)
     if path_str in code:
-        return code.replace(path_str, param_name)
+        return code.replace(path_str, raw_repl)
     return code
 
 

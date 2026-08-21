@@ -899,10 +899,11 @@ def fix(  # noqa: C901, PLR0912, PLR0915
         diff_table.add_column("Rationale", overflow="fold")
 
         for prop in session.proposals:
+            prop_path = Path(prop.target_file)
             rel_file = (
-                Path(prop.target_file).name
-                if Path(prop.target_file).is_absolute()
-                else prop.target_file
+                os.path.relpath(prop_path, root_dir)
+                if prop_path.is_absolute()
+                else str(prop_path)
             )
             diff_table.add_row(
                 prop.rule_id,

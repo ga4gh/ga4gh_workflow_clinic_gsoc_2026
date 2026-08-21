@@ -87,7 +87,7 @@ def test_path_regex_fixer_script_body() -> None:
 }"""
     proposal = fixer.generate_proposal(finding, code)
     assert proposal is not None
-    assert "params.filter_tool --input sample.tsv" in proposal.proposed_snippet
+    assert '"${params.filter_tool}" --input sample.tsv' in proposal.proposed_snippet
 
 
 def test_path_regex_fixer_process_scoping() -> None:
@@ -109,7 +109,7 @@ process PROC_B {
 }"""
     proposal = fixer.generate_proposal(finding, code)
     assert proposal is not None
-    assert "toolA params.shared" in proposal.proposed_snippet
+    assert 'toolA "${params.shared}"' in proposal.proposed_snippet
     # PROC_B should NOT be modified because the finding is scoped to PROC_A
     assert "toolB '/data/shared.fa'" in proposal.proposed_snippet
 
@@ -133,8 +133,8 @@ process STEP2 {
 }"""
     proposal = fixer.generate_proposal(finding, code)
     assert proposal is not None
-    assert "toolA params.shared" in proposal.proposed_snippet
-    assert "toolB params.shared" in proposal.proposed_snippet
+    assert 'toolA "${params.shared}"' in proposal.proposed_snippet
+    assert 'toolB "${params.shared}"' in proposal.proposed_snippet
     assert "'/ref/shared.fa'" not in proposal.proposed_snippet
 
 
@@ -223,5 +223,5 @@ def test_credential_regex_fixer_generic_assignment() -> None:
 }"""
     proposal = fixer.generate_proposal(finding, code)
     assert proposal is not None
-    assert "api_key = params.api_key" in proposal.proposed_snippet
+    assert "api_key = ${params.api_key}" in proposal.proposed_snippet
     assert "TODO: Rotate this credential" in proposal.proposed_snippet
