@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import workflow_clinic.doctor.fixers  # noqa: F401
 from workflow_clinic.doctor.base import FixerRegistry
-from workflow_clinic.models.fix import AppliedProposal, FixSession
+from workflow_clinic.models.fix import AppliedProposal, FixSession, FixStrategyLayer
 
 if TYPE_CHECKING:
     from workflow_clinic.models.diagnosis import Finding
@@ -47,12 +47,14 @@ def _get_safe_source_code(
 class DoctorRunner:
     """Orchestrator executing the multi-layer Workflow Doctor fix resolution cascade."""
 
-    def run(
+    def run(  # noqa: C901, PLR0913
         self,
         findings: list[Finding],
         root_dir: Path,
         bundle: WorkflowBundle | None = None,
         dry_run: bool = False,  # noqa: FBT001, FBT002
+        ai_only: bool = False,  # noqa: FBT001, FBT002
+        offline_only: bool = False,  # noqa: FBT001, FBT002
     ) -> FixSession:
         """Run the Workflow Doctor cascade across target findings.
 
@@ -61,6 +63,8 @@ class DoctorRunner:
             root_dir: Root workflow workspace directory containing target files.
             bundle: Optional pre-parsed WorkflowBundle context.
             dry_run: If True, generate proposals without modifying disk.
+            ai_only: If True, route all findings exclusively to AI fixers (LAYER3_AI).
+            offline_only: If True, exclude AI fixers and run only deterministic fixers.
 
         Returns:
             FixSession audit object tracking proposals and execution outcomes.
@@ -74,6 +78,15 @@ class DoctorRunner:
 
         for finding in findings:
             chain = FixerRegistry.get_fixer_chain(finding.rule_id)
+            if ai_only:
+                chain = [
+                    f for f in chain if f.strategy_layer == FixStrategyLayer.LAYER3_AI
+                ]
+            elif offline_only:
+                chain = [
+                    f for f in chain if f.strategy_layer != FixStrategyLayer.LAYER3_AI
+                ]
+
             if not chain:
                 logger.debug("No registered fixers found for rule %s", finding.rule_id)
                 continue

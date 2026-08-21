@@ -19,14 +19,14 @@ When `workflow-clinic examine` analyzes a bioinformatics workflow, static rules 
 Powered by **LiteLLM**, the AI Critic supports:
 
 - **BYOK (Bring Your Own Key)**: Pass explicit API keys or use standard provider environment variables (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, `COHERE_API_KEY`, `GROQ_API_KEY`).
-- **BYOM (Bring Your Own Model)**: Configure any supported LiteLLM model string (e.g. `gemini/gemini-2.5-flash`, `gpt-4o`, `anthropic/claude-3-5-sonnet`, or local models via `ollama/llama3`).
+- **BYOM (Bring Your Own Model)**: Configure any supported LiteLLM model string (e.g. `gemini/gemini-3.6-flash`, `gpt-4o`, `anthropic/claude-3-5-sonnet`, or local models via `ollama/llama3`).
 
 ```python
 from workflow_clinic.critic import AICriticAgent
 
 # Bring Your Own Key & Model
 agent = AICriticAgent(
-    model_name="gemini/gemini-2.5-flash",
+    model_name="gemini/gemini-3.6-flash",
     api_key="your-api-key-here",
 )
 ```

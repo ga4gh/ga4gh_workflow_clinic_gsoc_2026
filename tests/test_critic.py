@@ -77,7 +77,7 @@ def test_ai_critic_llm_completion_success(mock_completion: MagicMock) -> None:
     ]
     mock_completion.return_value = mock_response
 
-    agent = AICriticAgent(api_key="test-key", model_name="gemini/gemini-2.5-flash")
+    agent = AICriticAgent(api_key="test-key", model_name="gemini/gemini-3.6-flash")
     finding = Finding(
         id="test-id-3",
         rule_id="W001",
