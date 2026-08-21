@@ -23,6 +23,7 @@ class DummyASTFixer(BaseFixer):
         self,
         finding: Finding,
         bundle: WorkflowBundle | None = None,  # noqa: ARG002
+        source_code: str | None = None,  # noqa: ARG002
     ) -> FixProposal | None:
         return FixProposal(
             finding_id=finding.id,
@@ -46,6 +47,7 @@ class DummyRegexFixer(BaseFixer):
         self,
         finding: Finding,
         bundle: WorkflowBundle | None = None,  # noqa: ARG002
+        source_code: str | None = None,  # noqa: ARG002
     ) -> FixProposal | None:
         return FixProposal(
             finding_id=finding.id,
@@ -69,6 +71,7 @@ class DummyPathFixer(BaseFixer):
         self,
         finding: Finding,
         bundle: WorkflowBundle | None = None,  # noqa: ARG002
+        source_code: str | None = None,  # noqa: ARG002
     ) -> FixProposal | None:
         return FixProposal(
             finding_id=finding.id,
@@ -84,10 +87,12 @@ class DummyPathFixer(BaseFixer):
 
 @pytest.fixture(autouse=True)
 def _clean_registry() -> None:
-    """Clear registry before and after each test."""
+    """Clear registry during test and restore built-in fixers after test."""
+    original_fixers = dict(FixerRegistry._fixers)
     FixerRegistry.clear()
     yield
     FixerRegistry.clear()
+    FixerRegistry._fixers.update(original_fixers)
 
 
 def test_fixer_registration_and_can_fix() -> None:

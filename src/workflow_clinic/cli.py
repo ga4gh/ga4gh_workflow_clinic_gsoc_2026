@@ -834,7 +834,7 @@ def fix(  # noqa: C901, PLR0912, PLR0915
     categories = list(grouped_findings.keys())
 
     # Determine selected findings
-    is_tty = sys.stdin.isatty()
+    is_tty = sys.stdin.isatty() or os.environ.get("FORCE_INTERACTIVE") == "1"
     if all_issues or not is_tty:
         if not is_tty and not all_issues:
             console.print(
@@ -847,15 +847,19 @@ def fix(  # noqa: C901, PLR0912, PLR0915
             show_lines=True,
         )
         table.add_column("Option", style="bold cyan", width=8)
-        table.add_column("Category Domain", width=25)
+        table.add_column("Category Domain", width=22)
+        table.add_column("Rules", style="bold green", width=16)
         table.add_column("Findings Count", style="bold yellow", width=16)
 
         for idx, cat in enumerate(categories, 1):
-            cat_count = len(grouped_findings[cat])
+            cat_findings = grouped_findings[cat]
+            cat_rules = sorted({f.rule_id for f in cat_findings if f.rule_id})
+            rules_str = ", ".join(cat_rules) if cat_rules else "-"
             table.add_row(
                 f"[{idx}]",
                 cat.replace("_", " ").title(),
-                f"{cat_count} issue(s)",
+                rules_str,
+                f"{len(cat_findings)} issue(s)",
             )
 
         console.print()
@@ -889,15 +893,20 @@ def fix(  # noqa: C901, PLR0912, PLR0915
             f"\n[cyan]--- Workflow Doctor Dry Run ({len(session.proposals)} proposed fix(es)) ---[/cyan]\n"
         )
         diff_table = Table(show_lines=True)
-        diff_table.add_column("Rule", style="bold cyan", width=10)
-        diff_table.add_column("Target File", width=25)
-        diff_table.add_column("Layer Strategy", style="bold yellow", width=15)
+        diff_table.add_column("Rule", style="bold cyan", width=8)
+        diff_table.add_column("Target File", width=20)
+        diff_table.add_column("Layer Strategy", style="bold yellow", width=14)
         diff_table.add_column("Rationale", overflow="fold")
 
         for prop in session.proposals:
+            rel_file = (
+                Path(prop.target_file).name
+                if Path(prop.target_file).is_absolute()
+                else prop.target_file
+            )
             diff_table.add_row(
                 prop.rule_id,
-                prop.target_file,
+                rel_file,
                 prop.strategy_layer.name,
                 prop.explanation,
             )

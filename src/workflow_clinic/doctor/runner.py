@@ -55,7 +55,16 @@ class DoctorRunner:
                 if not fixer.can_fix(finding):
                     continue
 
-                proposal = fixer.generate_proposal(finding, bundle=bundle)
+                target_path = (root_dir / (finding.file_path or "")).resolve()
+                source_code = (
+                    target_path.read_text(encoding="utf-8")
+                    if target_path.is_file()
+                    else None
+                )
+
+                proposal = fixer.generate_proposal(
+                    finding, bundle=bundle, source_code=source_code
+                )
                 if proposal is None:
                     continue
 

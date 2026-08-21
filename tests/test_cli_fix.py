@@ -25,6 +25,7 @@ class DummyCliFixer(BaseFixer):
         self,
         finding: Finding,
         bundle: WorkflowBundle | None = None,  # noqa: ARG002
+        source_code: str | None = None,  # noqa: ARG002
     ) -> FixProposal | None:
         return FixProposal(
             finding_id=finding.id,
@@ -43,10 +44,12 @@ def _clear_env_and_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     """Isolate tests from GitHub environment variables and clean fixer registry."""
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    original_fixers = dict(FixerRegistry._fixers)
     FixerRegistry.clear()
     FixerRegistry.register(DummyCliFixer)
     yield
     FixerRegistry.clear()
+    FixerRegistry._fixers.update(original_fixers)
 
 
 def test_fix_cli_missing_diagnosis_file(tmp_path: Path) -> None:
@@ -222,3 +225,48 @@ def test_fix_cli_github_source_requires_token(monkeypatch: pytest.MonkeyPatch) -
     result = runner.invoke(app, ["fix", "--repo", "ga4gh/test-repo"])
     assert result.exit_code != 0
     assert "GitHub API token required" in result.output or "Error" in result.output
+
+
+def test_fix_cli_interactive_shows_rules_column(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify category domain table includes Rules column in interactive mode."""
+    monkeypatch.setenv("FORCE_INTERACTIVE", "1")
+    diag_file = tmp_path / "diagnosis.json"
+    diag_file.write_text(
+        json.dumps(
+            {
+                "workflow_name": "test_pipeline",
+                "tasks_count": 2,
+                "findings_count": 2,
+                "findings": [
+                    {
+                        "id": "h1",
+                        "rule_id": "W001",
+                        "severity": "CRITICAL",
+                        "category": "containerization",
+                        "title": "Missing container",
+                        "file_path": "main.nf",
+                        "fingerprint": {"hash": "h1"},
+                    },
+                    {
+                        "id": "h2",
+                        "rule_id": "W002",
+                        "severity": "WARNING",
+                        "category": "resources",
+                        "title": "Missing CPU",
+                        "file_path": "main.nf",
+                        "fingerprint": {"hash": "h2"},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Simulate interactive user pressing Enter (accepting default 'all')
+    result = runner.invoke(app, ["fix", str(tmp_path), "--dry-run"], input="all\n")
+    assert result.exit_code == 0
+    assert "Rules" in result.output
+    assert "W001" in result.output
+    assert "W002" in result.output
