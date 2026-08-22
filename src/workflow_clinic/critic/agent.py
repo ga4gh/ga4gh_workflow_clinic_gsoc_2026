@@ -2,13 +2,13 @@
 
 import json
 import logging
-import os
 import re
 from typing import Any, NamedTuple
 
 from workflow_clinic.advisor.retriever import RuleKnowledgeStore
 from workflow_clinic.models.diagnosis import DiagnosisReport, Finding, Remediation
 from workflow_clinic.models.workflow_bundle import WorkflowBundle
+from workflow_clinic.utils.llm import check_model_api_key, resolve_model
 
 
 class EnhancedResult(NamedTuple):
@@ -31,67 +31,6 @@ except ImportError:  # pragma: no cover
     litellm.completion = None  # type: ignore[attr-defined]
 
 
-_PROVIDER_ENV_KEYS: dict[str, list[str]] = {
-    "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    "google": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    "openai": ["OPENAI_API_KEY"],
-    "anthropic": ["ANTHROPIC_API_KEY"],
-    "mistral": ["MISTRAL_API_KEY"],
-    "cohere": ["COHERE_API_KEY"],
-    "groq": ["GROQ_API_KEY"],
-    "azure": ["AZURE_API_KEY", "AZURE_OPENAI_API_KEY"],
-    "bedrock": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
-}
-
-
-def check_model_api_key(
-    model_name: str | None, explicit_key: str | None = None
-) -> bool:
-    """Validate if an API key exists specifically for the requested model provider.
-
-    Args:
-        model_name: Model identifier (e.g. 'gemini/gemini-2.5-flash', 'anthropic/claude-3', 'gpt-4o').
-        explicit_key: Explicitly provided API key from caller.
-
-    Returns:
-        True if an API key is available for the given model/provider, False otherwise.
-    """
-    if explicit_key:
-        return True
-    if not model_name:
-        return False
-
-    clean_model = model_name.strip().lower()
-    if "/" in clean_model:
-        provider = clean_model.split("/", 1)[0]
-    elif clean_model.startswith(("gpt-", "o1", "o3", "text-embedding-", "dall-e")):
-        provider = "openai"
-    elif clean_model.startswith(("claude-", "anthropic")):
-        provider = "anthropic"
-    elif clean_model.startswith("gemini"):
-        provider = "gemini"
-    elif clean_model.startswith("mistral"):
-        provider = "mistral"
-    elif clean_model.startswith("command"):
-        provider = "cohere"
-    else:
-        provider = clean_model
-
-    if provider in _PROVIDER_ENV_KEYS:
-        expected_keys = _PROVIDER_ENV_KEYS[provider]
-        return any(bool(os.getenv(k)) for k in expected_keys)
-
-    all_keys = [
-        "GEMINI_API_KEY",
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "MISTRAL_API_KEY",
-        "COHERE_API_KEY",
-        "GROQ_API_KEY",
-    ]
-    return any(bool(os.getenv(k)) for k in all_keys)
-
-
 class AICriticAgent:
     """AI Critic Agent that enhances diagnostic findings with actionable remediation advice.
 
@@ -102,7 +41,7 @@ class AICriticAgent:
 
     def __init__(
         self,
-        model_name: str = "gemini/gemini-2.5-flash",
+        model_name: str | None = None,
         api_key: str | None = None,
         knowledge_store: RuleKnowledgeStore | None = None,
         enable_llm: bool = True,  # noqa: FBT001, FBT002
@@ -110,12 +49,14 @@ class AICriticAgent:
         """Initialize the AI Critic Agent.
 
         Args:
-            model_name: Target LiteLLM model identifier (e.g. gemini/gemini-2.5-flash, gpt-4o).
+            model_name: Target LiteLLM model identifier (e.g. gemini/gemini-3.6-flash, gpt-4o).
             api_key: Optional explicit API key override.
             knowledge_store: Optional custom RuleKnowledgeStore instance.
             enable_llm: Whether to attempt LLM calls when API keys are available.
         """
-        self.model_name = model_name
+        self.model_name = model_name or resolve_model(
+            explicit_model=None, api_key=api_key
+        )
         self.api_key = api_key
         self.enable_llm = enable_llm
         self.knowledge_store = knowledge_store or RuleKnowledgeStore()
@@ -282,6 +223,7 @@ Return ONLY valid JSON.
                 "container": task.resources.container if task.resources else None,
                 "cpus": task.resources.cpus if task.resources else None,
                 "memory": task.resources.memory if task.resources else None,
+                "script": task.command or None,
                 "file_path": task.file_path,
                 "line_number": task.line_number,
             }

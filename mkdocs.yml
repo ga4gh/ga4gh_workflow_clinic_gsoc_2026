@@ -67,6 +67,7 @@ plugins:
 nav:
   - Home: index.md
   - AI Critic: ai_critic.md
+  - Workflow Doctor: doctor.md
   - Issue Generation: issue_generation.md
   - Architecture: architecture/architecture.md
   - Development Guide: development.md

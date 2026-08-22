@@ -301,7 +301,7 @@ def test_check_model_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     assert check_model_api_key("gpt-4o") is True
     assert check_model_api_key("openai/gpt-4o") is True
     assert check_model_api_key("anthropic/claude-3") is False
-    assert check_model_api_key("gemini/gemini-2.5-flash") is False
+    assert check_model_api_key("gemini/gemini-3.6-flash") is False
 
     # With ANTHROPIC_API_KEY set
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
@@ -350,7 +350,7 @@ def test_examine_with_mismatched_api_key_falls_back(
 @pytest.mark.parametrize(
     ("env_var", "expected_model"),
     [
-        ("GEMINI_API_KEY", "gemini/gemini-2.5-flash"),
+        ("GEMINI_API_KEY", "gemini/gemini-3.6-flash"),
         ("OPENAI_API_KEY", "gpt-4o-mini"),
         ("ANTHROPIC_API_KEY", "claude-3-5-sonnet-20240620"),
         ("MISTRAL_API_KEY", "mistral/mistral-large-latest"),
@@ -397,5 +397,5 @@ def test_resolve_model_raw_api_key_without_model_uses_default(
     """Verify raw --api-key without --model logs warning and uses default."""
     for key, _ in PROVIDER_MODEL_MAP:
         monkeypatch.delenv(key, raising=False)
-    assert _resolve_model(None, "raw-key") == "gemini/gemini-2.5-flash"
+    assert _resolve_model(None, "raw-key") == "gemini/gemini-3.6-flash"
     mock_logger_warning.assert_called_once()

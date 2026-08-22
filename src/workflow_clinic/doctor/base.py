@@ -34,8 +34,10 @@ class BaseFixer(ABC):
             finding: Target diagnostic finding.
 
         Returns:
-            True if rule_id matches this fixer's rule_id.
+            True if rule_id matches this fixer's supported rule_id(s).
         """
+        if hasattr(self, "rule_ids") and self.rule_ids:
+            return finding.rule_id in self.rule_ids
         return finding.rule_id == self.rule_id
 
     @abstractmethod
@@ -158,6 +160,7 @@ class FixerRegistry:
     """Registry managing available Workflow Doctor rule fixers and cascade chains."""
 
     _fixers: ClassVar[dict[tuple[str, FixStrategyLayer], BaseFixer]] = {}
+    _known_classes: ClassVar[set[type[BaseFixer]]] = set()
 
     @classmethod
     def register(cls, fixer_cls: type[BaseFixer]) -> type[BaseFixer]:
@@ -172,22 +175,46 @@ class FixerRegistry:
         Raises:
             ValueError: If a fixer for the same rule_id and strategy_layer is already registered.
         """
-        key = (fixer_cls.rule_id, fixer_cls.strategy_layer)
-        if key in cls._fixers:
-            msg = (
-                f"Duplicate fixer registration for rule '{fixer_cls.rule_id}' "
-                f"at layer '{fixer_cls.strategy_layer.name}'."
-            )
-            raise ValueError(msg)
-
-        cls._fixers[key] = fixer_cls()
-        logger.debug(
-            "Registered fixer %s for rule %s at layer %s",
-            fixer_cls.__name__,
-            fixer_cls.rule_id,
-            fixer_cls.strategy_layer.name,
+        rule_ids = (
+            list(fixer_cls.rule_ids)
+            if hasattr(fixer_cls, "rule_ids") and getattr(fixer_cls, "rule_ids", None)
+            else [fixer_cls.rule_id]
         )
+        for r_id in rule_ids:
+            key = (r_id, fixer_cls.strategy_layer)
+            if key in cls._fixers:
+                msg = (
+                    f"Duplicate fixer registration for rule '{r_id}' "
+                    f"at layer '{fixer_cls.strategy_layer.name}'."
+                )
+                raise ValueError(msg)
+            cls._fixers[key] = fixer_cls()
+            logger.debug(
+                "Registered fixer %s for rule %s at layer %s",
+                fixer_cls.__name__,
+                r_id,
+                fixer_cls.strategy_layer.name,
+            )
+        cls._known_classes.add(fixer_cls)
         return fixer_cls
+
+    @classmethod
+    def _ensure_loaded(cls) -> None:
+        """Ensure built-in fixers are imported and registered."""
+        if not cls._fixers:
+            import workflow_clinic.doctor.fixers  # noqa: PLC0415, F401
+
+            for fixer_cls in cls._known_classes:
+                rule_ids = (
+                    list(fixer_cls.rule_ids)
+                    if hasattr(fixer_cls, "rule_ids")
+                    and getattr(fixer_cls, "rule_ids", None)
+                    else [fixer_cls.rule_id]
+                )
+                for r_id in rule_ids:
+                    key = (r_id, fixer_cls.strategy_layer)
+                    if key not in cls._fixers:
+                        cls._fixers[key] = fixer_cls()
 
     @classmethod
     def has_fixer(cls, rule_id: str) -> bool:
@@ -199,6 +226,7 @@ class FixerRegistry:
         Returns:
             True if at least one fixer is registered for rule_id.
         """
+        cls._ensure_loaded()
         return any(r_id == rule_id for (r_id, _) in cls._fixers)
 
     @classmethod
@@ -211,6 +239,7 @@ class FixerRegistry:
         Returns:
             List of BaseFixer instances sorted by strategy_layer ascending (LAYER1_AST -> LAYER2_REGEX -> LAYER3_AI).
         """
+        cls._ensure_loaded()
         matching = [
             fixer for (r_id, _), fixer in cls._fixers.items() if r_id == rule_id
         ]
@@ -219,9 +248,11 @@ class FixerRegistry:
     @classmethod
     def get_all_fixers(cls) -> list[BaseFixer]:
         """Get all registered fixer instances."""
+        cls._ensure_loaded()
         return list(cls._fixers.values())
 
     @classmethod
     def clear(cls) -> None:
         """Clear all registered fixers (primarily used for test isolation)."""
         cls._fixers.clear()
+        cls._known_classes.clear()

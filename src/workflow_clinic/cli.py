@@ -113,7 +113,7 @@ _SEVERITY_COLORS: dict[Severity, str] = {
 }
 
 PROVIDER_MODEL_MAP = [
-    ("GEMINI_API_KEY", "gemini/gemini-2.5-flash"),
+    ("GEMINI_API_KEY", "gemini/gemini-3.6-flash"),
     ("OPENAI_API_KEY", "gpt-4o-mini"),
     ("ANTHROPIC_API_KEY", "claude-3-5-sonnet-20240620"),
     ("MISTRAL_API_KEY", "mistral/mistral-large-latest"),
@@ -133,9 +133,9 @@ def _resolve_model(explicit_model: str | None, api_key: str | None) -> str:
             return model_name
     if api_key:
         logger.warning(
-            "--api-key provided without --model. Defaulting to gemini/gemini-2.5-flash."
+            "--api-key provided without --model. Defaulting to gemini/gemini-3.6-flash."
         )
-    return "gemini/gemini-2.5-flash"
+    return "gemini/gemini-3.6-flash"
 
 
 @app.command()
@@ -186,7 +186,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
         typer.Option(
             "--model",
             "-m",
-            help="LiteLLM model name (e.g. gpt-4o, gemini/gemini-2.5-flash).",
+            help="LiteLLM model name (e.g. gpt-4o, gemini/gemini-3.6-flash).",
         ),
     ] = None,
     api_key: Annotated[
@@ -276,7 +276,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             else:
                 console.print("[cyan]Performing AI Audit for new issues...[/cyan]")
                 agent = AICriticAgent(
-                    model_name=resolved_model or "gemini/gemini-2.5-flash",
+                    model_name=resolved_model or "gemini/gemini-3.6-flash",
                     api_key=api_key,
                 )
                 audit_findings = agent.audit_workflow(
@@ -320,7 +320,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             critic_agent = None
             try:
                 critic_agent = AICriticAgent(
-                    model_name=resolved_model or "gemini/gemini-2.5-flash",
+                    model_name=resolved_model or "gemini/gemini-3.6-flash",
                     api_key=api_key,
                 )
                 logger.info(
@@ -743,6 +743,21 @@ def fix(  # noqa: C901, PLR0912, PLR0915
             help="Render proposed code diffs and dry-run summary without modifying files on disk.",
         ),
     ] = False,
+    enhance: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--enhance",
+            "-e",
+            help="Run hybrid 3-tier cascade with AI Critic to identify and repair complex semantic issues (AI001+).",
+        ),
+    ] = False,
+    ai_only: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--ai-only",
+            help="Force all findings (W001-W004, AI001+) to be repaired exclusively using AI/LLM.",
+        ),
+    ] = False,
     token: Annotated[
         str | None,
         typer.Option(
@@ -761,8 +776,15 @@ def fix(  # noqa: C901, PLR0912, PLR0915
 ) -> None:
     """Automated Workflow Doctor engine for repairing diagnostic findings in Nextflow & Snakemake pipelines."""
     target_path = Path(target).resolve()
-    diag_path = target_path if target_path.is_file() else target_path / "diagnosis.json"
-    root_dir = diag_path.parent if diag_path.is_file() else target_path
+    if target_path.is_file() and target_path.suffix == ".json":
+        diag_path = target_path
+        root_dir = target_path.parent
+    elif target_path.is_file():
+        diag_path = target_path.parent / "diagnosis.json"
+        root_dir = target_path.parent
+    else:
+        diag_path = target_path / "diagnosis.json"
+        root_dir = target_path
 
     if not diag_path.exists():
         err_console.print(
@@ -812,7 +834,62 @@ def fix(  # noqa: C901, PLR0912, PLR0915
             )
             raise typer.Exit(code=1) from e
 
-    findings = report.findings
+    findings = list(report.findings)
+
+    if target_path.is_file() and target_path.suffix in (".nf", ".smk"):
+        target_name = target_path.name
+        matched = [
+            f
+            for f in findings
+            if f.file_path
+            and (
+                Path(f.file_path).name == target_name
+                or (root_dir / f.file_path).resolve() == target_path
+            )
+        ]
+        if matched:
+            findings = matched
+
+    # AI Critic audit (enabled in --enhance and --ai-only modes)
+    if enhance or ai_only:
+        model_name = _resolve_model(None, None)
+        if not check_model_api_key(model_name):
+            if ai_only:
+                err_console.print(
+                    f"[red]Error:[/red] '--ai-only' requires an active LLM API key for '{model_name}'. "
+                    "Please set GEMINI_API_KEY, GROQ_API_KEY, OPENAI_API_KEY, or specify model environment variables."
+                )
+                raise typer.Exit(code=1)
+            console.print(
+                f"[yellow]⚠️  No API key found for '{model_name}' - running offline fixes only (W001-W004).[/yellow]"
+            )
+        else:
+            try:
+                workflow_file: Path | None = None
+                if target_path.is_file() and target_path.suffix in (".nf", ".smk"):
+                    workflow_file = target_path
+                else:
+                    for f in report.findings:
+                        if f.file_path:
+                            candidate = (root_dir / f.file_path).resolve()
+                            if candidate.is_file():
+                                workflow_file = candidate
+                                break
+
+                if workflow_file:
+                    parser_name = ParserRegistry.detect_parser(workflow_file)
+                    parser = ParserRegistry.get_parser(parser_name)
+                    bundle = parser.parse(workflow_file)
+                    critic = AICriticAgent(model_name=model_name)
+                    ai_findings = critic.audit_workflow(bundle)
+                    if ai_findings:
+                        findings.extend(ai_findings)
+                        console.print(
+                            f"[bold cyan]AI Critic identified {len(ai_findings)} enhancement finding(s).[/bold cyan]"
+                        )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("AI Critic audit failed: %s", e)
+
     if not findings:
         console.print("\n[bold green]✓[/bold green] No actionable findings to fix!\n")
         raise typer.Exit(code=0)
@@ -880,7 +957,13 @@ def fix(  # noqa: C901, PLR0912, PLR0915
         selected_findings = [f for f in findings if f.category in selected_categories]
 
     runner = DoctorRunner()
-    session = runner.run(selected_findings, root_dir=root_dir, dry_run=dry_run)
+    session = runner.run(
+        selected_findings,
+        root_dir=root_dir,
+        dry_run=dry_run,
+        ai_only=ai_only,
+        offline_only=(not enhance and not ai_only),
+    )
 
     if not session.proposals:
         console.print(
