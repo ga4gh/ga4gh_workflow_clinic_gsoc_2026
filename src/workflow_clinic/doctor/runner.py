@@ -6,6 +6,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import workflow_clinic.doctor.fixers  # noqa: F401
 from workflow_clinic.doctor.base import FixerRegistry
 from workflow_clinic.models.fix import AppliedProposal, FixSession
 
