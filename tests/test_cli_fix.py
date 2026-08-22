@@ -13,7 +13,7 @@ from workflow_clinic.doctor.base import BaseFixer, FixerRegistry
 from workflow_clinic.doctor.fixers.ai import AIFixer
 from workflow_clinic.models.diagnosis import Finding
 from workflow_clinic.models.fix import FixProposal, FixStrategyLayer
-from workflow_clinic.models.workflow_bundle import WorkflowBundle
+from workflow_clinic.models.workflow_bundle import WorkflowBundle, WorkflowMetadata
 
 runner = CliRunner()
 
@@ -354,6 +354,13 @@ def test_fix_enhance_with_key_merges_ai_findings(tmp_path: Path) -> None:
         )
     ]
 
+    mock_bundle = WorkflowBundle(
+        metadata=WorkflowMetadata(name="test_pipeline"),
+        tasks=[],
+    )
+    mock_parser = MagicMock()
+    mock_parser.parse.return_value = mock_bundle
+
     FixerRegistry.register(AIFixer)
 
     with (
@@ -364,6 +371,14 @@ def test_fix_enhance_with_key_merges_ai_findings(tmp_path: Path) -> None:
         patch(
             "workflow_clinic.doctor.fixers.ai.litellm.completion",
             return_value=mock_llm_response,
+        ),
+        patch(
+            "workflow_clinic.cli.ParserRegistry.detect_parser",
+            return_value="nextflow",
+        ),
+        patch(
+            "workflow_clinic.cli.ParserRegistry.get_parser",
+            return_value=mock_parser,
         ),
         patch(
             "workflow_clinic.cli.AICriticAgent.audit_workflow",
@@ -446,6 +461,13 @@ def test_fix_ai_only_with_key_routes_to_ai(tmp_path: Path) -> None:
         )
     ]
 
+    mock_bundle = WorkflowBundle(
+        metadata=WorkflowMetadata(name="test_pipeline"),
+        tasks=[],
+    )
+    mock_parser = MagicMock()
+    mock_parser.parse.return_value = mock_bundle
+
     FixerRegistry.register(AIFixer)
 
     with (
@@ -456,6 +478,14 @@ def test_fix_ai_only_with_key_routes_to_ai(tmp_path: Path) -> None:
         patch(
             "workflow_clinic.doctor.fixers.ai.litellm.completion",
             return_value=mock_llm_response,
+        ),
+        patch(
+            "workflow_clinic.cli.ParserRegistry.detect_parser",
+            return_value="nextflow",
+        ),
+        patch(
+            "workflow_clinic.cli.ParserRegistry.get_parser",
+            return_value=mock_parser,
         ),
         patch(
             "workflow_clinic.cli.AICriticAgent.audit_workflow",

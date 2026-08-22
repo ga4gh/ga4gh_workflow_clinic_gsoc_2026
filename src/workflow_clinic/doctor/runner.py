@@ -51,10 +51,11 @@ class DoctorRunner:
         self,
         findings: list[Finding],
         root_dir: Path,
+        *,
         bundle: WorkflowBundle | None = None,
-        dry_run: bool = False,  # noqa: FBT001, FBT002
-        ai_only: bool = False,  # noqa: FBT001, FBT002
-        offline_only: bool = False,  # noqa: FBT001, FBT002
+        dry_run: bool = False,
+        ai_only: bool = False,
+        offline_only: bool = False,
     ) -> FixSession:
         """Run the Workflow Doctor cascade across target findings.
 

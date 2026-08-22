@@ -181,7 +181,7 @@ class AIFixer(BaseFixer):
         )
 
     def verify_fix(self, modified_file: Path) -> bool:
-        """Verify that the AI-patched file contains syntactically valid Nextflow/Groovy code."""
+        """Verify Groovy/Nextflow syntax when 'groovy_parser' is available; otherwise verification is skipped."""
         if not modified_file.exists():
             return False
 

@@ -60,7 +60,7 @@ The Doctor renders a terminal diff showing exact lines added, modified, or remov
 | Command | Mode | Execution Strategy | API Key Required? |
 | :--- | :--- | :--- | :--- |
 | `workflow-clinic fix` | **Fully Offline** | Layer 1 AST (`W001`, `W002`) + Layer 2 Regex (`W003`, `W004`). Instant, zero-cost, 100% deterministic. | ❌ No |
-| `workflow-clinic fix --enhance` | **Hybrid Cascade** | AI Critic finds subtle issues (`AI001`–`AI003`). AST/Regex solves `W00x`, AI solves `AI00x`. | ✅ Yes |
+| `workflow-clinic fix --enhance` | **Hybrid Cascade** | AI Critic finds subtle issues (`AI001`–`AI003`). AST/Regex solves `W00x`, AI solves `AI00x` (falls back to offline-only when no key is available). | ✅ For AI (offline fallback without key) |
 | `workflow-clinic fix --ai-only` | **All with AI** | Routes **every finding** (`W001`–`W004` & `AI001`+) directly to `AIFixer` to generate context-aware AI solutions. | ✅ Yes |
 
 ```bash
