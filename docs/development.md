@@ -11,7 +11,8 @@ new workflow language (e.g. Snakemake, CWL, WDL).
 3. [How to Write a New Parser Class](#3-how-to-write-a-new-parser-class)
 4. [Common Pitfalls](#4-common-pitfalls)
 5. [How to Write a New Rule](#5-how-to-write-a-new-rule)
-6. [Related Files](#6-related-files)
+6. [How the Rule Knowledge Store Works](#6-how-the-rule-knowledge-store-works)
+7. [Related Files](#7-related-files)
 
 ---
 

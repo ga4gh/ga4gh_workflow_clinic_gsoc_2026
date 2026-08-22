@@ -133,7 +133,9 @@ session = runner.run(findings, root_dir=Path.cwd(), dry_run=False)
 
 # 3. Inspect results
 for applied in session.applied_proposals:
-    print(f"Applied {applied.proposal.rule_id} via {applied.proposal.strategy_layer.name}")
+    print(
+        f"Applied {applied.proposal.rule_id} via {applied.proposal.strategy_layer.name}"
+    )
 ```
 
 ---
@@ -146,6 +148,7 @@ Developers can register new rule fixers into the Doctor registry using the `@Fix
 from workflow_clinic.doctor.base import BaseFixer, FixerRegistry
 from workflow_clinic.models.fix import FixProposal, FixStrategyLayer
 
+
 @FixerRegistry.register
 class MyCustomFixer(BaseFixer):
     rule_id = "W999"
@@ -154,7 +157,7 @@ class MyCustomFixer(BaseFixer):
     def generate_proposal(self, finding, bundle=None, source_code=None):
         # 1. Calculate the fix patch
         proposed_code = source_code.replace("bad_code", "good_code")
-        
+
         # 2. Return a FixProposal
         return FixProposal(
             finding_id=finding.id,
