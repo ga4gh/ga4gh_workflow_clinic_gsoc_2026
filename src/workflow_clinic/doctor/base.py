@@ -40,7 +40,10 @@ class BaseFixer(ABC):
 
     @abstractmethod
     def generate_proposal(
-        self, finding: Finding, bundle: WorkflowBundle | None = None
+        self,
+        finding: Finding,
+        bundle: WorkflowBundle | None = None,
+        source_code: str | None = None,
     ) -> FixProposal | None:
         """Generate a proposed code modification for a finding.
 

@@ -35,9 +35,9 @@ _TOKEN_DELIMITERS = re.compile(r"[=>]")
 
 def _is_flaggable_absolute_path(token: str) -> bool:
     """Return True if *token* looks like a hardcoded absolute path worth flagging."""
-    if "://" in token:
-        return False  # URLs, docker:// refs, etc.
-    if token in _EXCLUDED_EXACT_PATHS:
+    if "://" in token or token.startswith(("//", "#")):
+        return False  # URLs, comments, etc.
+    if token in ("/", "//") or token in _EXCLUDED_EXACT_PATHS:
         return False
     try:
         return Path(token).is_absolute()

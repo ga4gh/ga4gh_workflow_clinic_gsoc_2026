@@ -115,6 +115,18 @@ class HardcodedCredentialsRule(BaseRule):
             if len(value) < _MIN_GENERIC_LENGTH:
                 continue
 
+            if value.startswith(
+                (
+                    "params.",
+                    "$params.",
+                    "${params.",
+                    "secrets.",
+                    "$secrets.",
+                    "${secrets.",
+                )
+            ):
+                continue
+
             if any(p.search(value) for p in _VENDOR_PATTERNS.values()):
                 continue  # already reported at higher confidence by vendor layer
 
