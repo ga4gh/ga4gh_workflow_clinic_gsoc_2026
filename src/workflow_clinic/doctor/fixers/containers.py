@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from workflow_clinic.doctor.base import BaseFixer, FixerRegistry
-from workflow_clinic.doctor.patcher import inject_directive, replace_directive_text
+from workflow_clinic.doctor.patcher import (
+    detect_process_indentation,
+    get_process_line_range,
+    inject_directive,
+    replace_directive_text,
+)
 from workflow_clinic.models.fix import FixProposal, FixStrategyLayer
 
 if TYPE_CHECKING:
@@ -38,7 +43,7 @@ class ContainerASTFixer(BaseFixer):
         """
         return finding.rule_id == "W001"
 
-    def generate_proposal(  # noqa: C901, PLR0912
+    def generate_proposal(  # noqa: C901, PLR0912, PLR0915
         self,
         finding: Finding,
         bundle: WorkflowBundle | None = None,
@@ -104,13 +109,34 @@ class ContainerASTFixer(BaseFixer):
                 f"Inject default container '{DEFAULT_CONTAINER}' "
                 f"into process '{process_name}'."
             )
+            header_pattern = re.compile(
+                rf"^[ \t]*process\s+{re.escape(process_name)}\s*\{{", re.MULTILINE
+            )
+            match = header_pattern.search(source_code)
+            if not match:
+                header_pattern = re.compile(
+                    rf"process\s+{re.escape(process_name)}\s*\{{", re.MULTILINE
+                )
+                match = header_pattern.search(source_code)
+
+            if match:
+                original_snippet = match.group(0)
+                start_line, end_line = get_process_line_range(source_code, process_name)
+                indent = detect_process_indentation(
+                    source_code.splitlines(), start_line, end_line
+                )
+                proposed_snippet = f'{original_snippet}\n{indent}container "{DEFAULT_CONTAINER}"  // TODO: Replace with specific tool image (e.g. biocontainers/samtools:1.17)'
+            else:
+                original_snippet = source_code
+                proposed_snippet = patched_code
+
             return FixProposal(
                 finding_id=getattr(finding, "id", "") or f"W001:{process_name}",
                 rule_id=self.rule_id,
                 category=getattr(finding, "category", "") or "containerization",
                 target_file=target_file,
-                original_snippet=source_code,
-                proposed_snippet=patched_code,
+                original_snippet=original_snippet,
+                proposed_snippet=proposed_snippet,
                 explanation=explanation,
                 strategy_layer=self.strategy_layer,
                 line_number=getattr(finding, "line_number", None),
@@ -140,13 +166,32 @@ class ContainerASTFixer(BaseFixer):
                 f"Pin container image tag in process '{process_name}' "
                 f"from '{unpinned_image}' to '{pinned_image}'."
             )
+
+            start_line, end_line = get_process_line_range(source_code, process_name)
+            lines = source_code.splitlines()
+            proc_lines = lines[start_line - 1 : end_line]
+            container_line = None
+            for line in proc_lines:
+                if "container" in line and unpinned_image in line:
+                    container_line = line
+                    break
+
+            if container_line:
+                original_snippet = container_line
+                proposed_snippet = container_line.replace(
+                    unpinned_image, pinned_image, 1
+                )
+            else:
+                original_snippet = source_code
+                proposed_snippet = patched_code
+
             return FixProposal(
                 finding_id=getattr(finding, "id", "") or f"W001:{process_name}",
                 rule_id=self.rule_id,
                 category=getattr(finding, "category", "") or "containerization",
                 target_file=target_file,
-                original_snippet=source_code,
-                proposed_snippet=patched_code,
+                original_snippet=original_snippet,
+                proposed_snippet=proposed_snippet,
                 explanation=explanation,
                 strategy_layer=self.strategy_layer,
                 line_number=getattr(finding, "line_number", None),

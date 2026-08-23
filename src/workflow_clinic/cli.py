@@ -4,6 +4,7 @@ This module houses the Typer application, global option callbacks,
 and CLI command routing.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -11,12 +12,14 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 import typer
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.markup import escape
+from rich.panel import Panel
 from rich.table import Table
 
 from workflow_clinic import __version__
@@ -34,6 +37,7 @@ from workflow_clinic.models.diagnosis import (
 from workflow_clinic.models.diagnosis import (
     Finding as DiagnosisFinding,
 )
+from workflow_clinic.models.fix import AppliedProposal, ApplyOutcome, FixSession
 from workflow_clinic.parsers import ParserRegistry
 from workflow_clinic.reporting import (
     GitHubPublisher,
@@ -78,6 +82,42 @@ def version_callback(value: bool) -> None:  # noqa: FBT001
     if value:
         typer.echo(f"workflow-clinic version {__version__}")
         raise typer.Exit
+
+
+def _save_fix_session(fixes_path: Path, session: FixSession) -> None:
+    """Save applied fix proposals to fixes.json, merging with any existing fixes."""
+    merged_proposals: dict[str, AppliedProposal] = {}
+    if fixes_path.exists():
+        with contextlib.suppress(Exception):
+            existing = FixSession.model_validate_json(
+                fixes_path.read_text(encoding="utf-8")
+            )
+            for ap in existing.applied_proposals:
+                if ap.applied:
+                    key = f"{ap.proposal.finding_id}:{ap.proposal.rule_id}:{ap.proposal.target_file}"
+                    merged_proposals[key] = ap
+    for ap in session.applied_proposals:
+        if ap.applied:
+            key = f"{ap.proposal.finding_id}:{ap.proposal.rule_id}:{ap.proposal.target_file}"
+            merged_proposals[key] = ap
+
+    combined_session = FixSession(
+        session_id=session.session_id,
+        source=session.source,
+        proposals=[ap.proposal for ap in merged_proposals.values()],
+        applied_proposals=list(merged_proposals.values()),
+    )
+    fixes_path.write_text(combined_session.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _load_fix_session(fixes_path: Path) -> FixSession | None:
+    """Load saved fix session from fixes.json if it exists."""
+    if not fixes_path.exists():
+        return None
+    try:
+        return FixSession.model_validate_json(fixes_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @app.callback(invoke_without_command=True)
@@ -344,6 +384,9 @@ def examine(  # noqa: C901, PLR0912, PLR0915
                 json.dumps(report.model_dump(mode="json"), indent=2) + "\n",
                 encoding="utf-8",
             )
+            fixes_file = output.parent / "fixes.json"
+            if fixes_file.exists():
+                fixes_file.unlink()
             console.print(
                 f"[green]✓[/green] Saved diagnosis report to [bold]{escape(str(output))}[/bold]"
             )
@@ -439,7 +482,7 @@ def examine(  # noqa: C901, PLR0912, PLR0915
             temp_dir_obj.cleanup()
 
 
-def parse_selection(raw: str, max_index: int) -> list[int]:
+def parse_selection(raw: str, max_index: int) -> list[int]:  # noqa: C901
     """Parse interactive selection string into 0-indexed integer list.
 
     Supports comma lists ("1, 3"), ranges ("1-3"), "all", and default empty.
@@ -447,7 +490,9 @@ def parse_selection(raw: str, max_index: int) -> list[int]:
     """
 
     clean = raw.strip().lower()
-    if not clean or clean in ("all", "a"):
+    if not clean:
+        return []
+    if clean in ("all", "a"):
         return list(range(max_index))
 
     indices: list[int] = []
@@ -634,13 +679,11 @@ def create_issue(  # noqa: C901, PLR0912, PLR0915
             )
         selected_indices = list(range(len(generated_issues)))
     else:
-        prompt_msg = (
-            f"Select issues to publish (e.g. 1,{len(generated_issues)} or all) [all]"
-        )
-        raw_input_str = typer.prompt(prompt_msg, default="all")
+        prompt_msg = f"Select issues to publish (e.g. 1,{len(generated_issues)} or all)"
+        raw_input_str = typer.prompt(prompt_msg, default="")
         selected_indices = parse_selection(raw_input_str, len(generated_issues))
         if not selected_indices:
-            err_console.print("[yellow]No valid issues selected. Exiting.[/yellow]")
+            err_console.print("[yellow]No issues selected. Exiting.[/yellow]")
             raise typer.Exit(code=0)
 
     selected_issues = [generated_issues[i] for i in selected_indices]
@@ -773,6 +816,52 @@ def fix(  # noqa: C901, PLR0912, PLR0915
             help="Target GitHub repository in 'owner/repo' format. Overrides GITHUB_REPOSITORY env var.",
         ),
     ] = None,
+    create_pr: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--create-pr",
+            "-p",
+            help="Publish applied fixes as a Pull Request directly to the target GitHub repository.",
+        ),
+    ] = False,
+    issue: Annotated[
+        int | None,
+        typer.Option(
+            "--issue",
+            "-i",
+            help="Target a specific GitHub issue number to resolve with automated fixes.",
+        ),
+    ] = None,
+    base_branch: Annotated[
+        str | None,
+        typer.Option(
+            "--base-branch",
+            help="Base branch for the published Pull Request (defaults to repository default branch).",
+        ),
+    ] = None,
+    branch_name: Annotated[
+        str | None,
+        typer.Option(
+            "--branch-name",
+            help="Custom head branch name for the published Pull Request.",
+        ),
+    ] = None,
+    local: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--local",
+            help="Force local Markdown file export (default: pr.md) without publishing to GitHub API.",
+        ),
+    ] = False,
+    output: Annotated[
+        Path,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output Markdown file path for local export when --create-pr or --local is used (default: pr.md).",
+        ),
+    ] = Path("pr.md"),
+    standalone_create_pr: bool = False,  # noqa: FBT001, FBT002
 ) -> None:
     """Automated Workflow Doctor engine for repairing diagnostic findings in Nextflow & Snakemake pipelines."""
     target_path = Path(target).resolve()
@@ -806,35 +895,74 @@ def fix(  # noqa: C901, PLR0912, PLR0915
 
     token_val = token or os.getenv("GITHUB_TOKEN")
     repo_val = repo or os.getenv("GITHUB_REPOSITORY")
+    findings = list(report.findings)
 
-    if repo_val or token:
-        if not token_val:
+    use_github = not local and bool(token_val and repo_val)
+
+    if use_github and create_pr:
+        try:
+            publisher = GitHubPublisher(token=str(token_val), repository=str(repo_val))
+            with console.status(
+                "[bold cyan]Fetching active issues and Pull Requests from GitHub...[/bold cyan]"
+            ):
+                active_fps = publisher.fetch_active_fingerprints()
+            if active_fps:
+                original_count = len(findings)
+                findings = filter_new_findings(findings, active_fps)
+                diff_count = original_count - len(findings)
+                if diff_count > 0:
+                    console.print(
+                        f"[cyan]Deduplication:[/cyan] filtered out {diff_count} finding(s) already tracked in open PRs."
+                    )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Failed to fetch active fingerprints for PR filtering: %s", e
+            )
+
+    # Only validate token/repo when GitHub features or CLI options are explicitly requested
+    if (
+        (create_pr or issue is not None or repo is not None or token is not None)
+        and not local
+        and not dry_run
+    ):
+        if repo_val and not token_val:
             err_console.print(
                 "[red]Error:[/red] GitHub repository specified but GitHub token is missing. Provide via --token or GITHUB_TOKEN."
             )
             raise typer.Exit(code=1)
-        if not repo_val:
+        if token_val and not repo_val:
             err_console.print(
                 "[red]Error:[/red] GitHub token specified but repository is missing. Provide via --repo or GITHUB_REPOSITORY."
             )
             raise typer.Exit(code=1)
 
-        try:
-            publisher = GitHubPublisher(token=token_val, repository=repo_val)
-            active_fps = publisher.fetch_active_fingerprints()
-            if active_fps:
-                logger.info(
-                    "Fetched %d active fingerprints from GitHub repository %s",
-                    len(active_fps),
-                    repo_val,
-                )
-        except GitHubPublisherError as e:
+    if issue is not None:
+        if not use_github:
             err_console.print(
-                f"[red]GitHub Authentication/API Error:[/red] {escape(str(e))}"
+                "[red]Error:[/red] Targeting a GitHub issue requires --repo and --token (or GITHUB_REPOSITORY and GITHUB_TOKEN)."
             )
+            raise typer.Exit(code=1)
+        try:
+            publisher = GitHubPublisher(token=str(token_val), repository=str(repo_val))
+            _, issue_fps = publisher.fetch_issue_findings(issue)
+            matched_findings = [
+                f
+                for f in report.findings
+                if f.fingerprint and f.fingerprint.hash in issue_fps
+            ]
+            if matched_findings:
+                findings = matched_findings
+            else:
+                console.print(
+                    f"[yellow]No matching findings in '{diag_path.name}' for Issue #{issue}.[/yellow]"
+                )
+                raise typer.Exit(code=0)
+            console.print(
+                f"[bold cyan]Targeting Issue #{issue}:[/bold cyan] found {len(findings)} matching finding(s)."
+            )
+        except GitHubPublisherError as e:
+            err_console.print(f"[red]GitHub Issue Error:[/red] {escape(str(e))}")
             raise typer.Exit(code=1) from e
-
-    findings = list(report.findings)
 
     if target_path.is_file() and target_path.suffix in (".nf", ".smk"):
         target_name = target_path.name
@@ -890,8 +1018,22 @@ def fix(  # noqa: C901, PLR0912, PLR0915
             except Exception as e:  # noqa: BLE001
                 logger.warning("AI Critic audit failed: %s", e)
 
+    if create_pr:
+        findings = [
+            f
+            for f in findings
+            if getattr(f, "severity", "").upper() not in ("INFO", "LOW")
+        ]
+
     if not findings:
-        console.print("\n[bold green]✓[/bold green] No actionable findings to fix!\n")
+        if create_pr:
+            console.print(
+                "\n[bold yellow]![/bold yellow] There are no fixes to commit in a PR. Please run [green]workflow-clinic fix[/green] first.\n"
+            )
+        else:
+            console.print(
+                "\n[bold green]✓[/bold green] No actionable findings to fix!\n"
+            )
         raise typer.Exit(code=0)
 
     if rule:
@@ -908,7 +1050,12 @@ def fix(  # noqa: C901, PLR0912, PLR0915
     for f in findings:
         grouped_findings.setdefault(f.category, []).append(f)
 
-    categories = list(grouped_findings.keys())
+    # Known category domains in a stable order
+    all_known_categories = ["containerization", "resources", "portability", "security"]
+    stable_categories = list(all_known_categories)
+    for cat in grouped_findings:
+        if cat not in stable_categories:
+            stable_categories.append(cat)
 
     # Determine selected findings
     is_tty = sys.stdin.isatty() or os.environ.get("FORCE_INTERACTIVE") == "1"
@@ -928,12 +1075,19 @@ def fix(  # noqa: C901, PLR0912, PLR0915
         table.add_column("Rules", style="bold green", width=16)
         table.add_column("Findings Count", style="bold yellow", width=16)
 
-        for idx, cat in enumerate(categories, 1):
+        # Build map of stable index (1-based) -> category name
+        option_to_category: dict[int, str] = {}
+        for cat in stable_categories:
+            if cat in grouped_findings:
+                opt_idx = stable_categories.index(cat) + 1
+                option_to_category[opt_idx] = cat
+
+        for opt_idx, cat in sorted(option_to_category.items()):
             cat_findings = grouped_findings[cat]
             cat_rules = sorted({f.rule_id for f in cat_findings if f.rule_id})
             rules_str = ", ".join(cat_rules) if cat_rules else "-"
             table.add_row(
-                f"[{idx}]",
+                f"[{opt_idx}]",
                 cat.replace("_", " ").title(),
                 rules_str,
                 f"{len(cat_findings)} issue(s)",
@@ -943,43 +1097,137 @@ def fix(  # noqa: C901, PLR0912, PLR0915
         console.print(table)
 
         prompt_msg = (
-            f"Select category domains to fix (e.g. 1,{len(categories)} or all) [all]"
+            f"Select category domains to fix (e.g. 1,{len(stable_categories)} or all)"
         )
-        raw_input_str = typer.prompt(prompt_msg, default="all")
-        selected_indices = parse_selection(raw_input_str, len(categories))
+        raw_input_str = typer.prompt(prompt_msg, default="")
+        selected_indices = parse_selection(raw_input_str, len(stable_categories))
         if not selected_indices:
+            err_console.print("[yellow]No category domains selected. Exiting.[/yellow]")
+            raise typer.Exit(code=0)
+
+        # Map stable indices back to actual categories
+        selected_categories = {
+            stable_categories[i]
+            for i in selected_indices
+            if i < len(stable_categories) and stable_categories[i] in grouped_findings
+        }
+        if not selected_categories:
             err_console.print(
-                "[yellow]No valid category domains selected. Exiting.[/yellow]"
+                "[yellow]No active category domains selected from input. Exiting.[/yellow]"
             )
             raise typer.Exit(code=0)
 
-        selected_categories = {categories[i] for i in selected_indices}
         selected_findings = [f for f in findings if f.category in selected_categories]
 
-    runner = DoctorRunner()
-    session = runner.run(
-        selected_findings,
-        root_dir=root_dir,
-        dry_run=dry_run,
-        ai_only=ai_only,
-        offline_only=(not enhance and not ai_only),
-    )
+    if standalone_create_pr:
+        fixes_path = diag_path.parent / "fixes.json"
+        saved_session = _load_fix_session(fixes_path)
 
-    if not session.proposals:
-        console.print(
-            "\n[bold yellow]![/bold yellow] No registered fixers available for the selected findings yet.\n"
+        unfixed_findings: list[DiagnosisFinding] = []
+        matched_applied_proposals: list[AppliedProposal] = []
+
+        if not saved_session or not saved_session.applied_proposals:
+            unfixed_findings = list(selected_findings)
+        else:
+            for f in selected_findings:
+                f_hash = f.fingerprint.hash if f.fingerprint else f.id
+                f_rule = f.rule_id
+                f_file = f.file_path or ""
+                f_filename = Path(f_file).name
+
+                matched_ap = None
+                for ap in saved_session.applied_proposals:
+                    if not ap.applied:
+                        continue
+                    ap_file = ap.proposal.target_file
+                    ap_filename = Path(ap_file).name
+                    if (
+                        ap.proposal.finding_id and ap.proposal.finding_id == f_hash
+                    ) or (
+                        ap.proposal.rule_id == f_rule
+                        and (ap_file == f_file or ap_filename == f_filename)
+                    ):
+                        matched_ap = ap
+                        break
+
+                if matched_ap:
+                    matched_applied_proposals.append(matched_ap)
+                else:
+                    unfixed_findings.append(f)
+
+        if unfixed_findings:
+            console.print(
+                "\n[bold yellow]![/bold yellow] The issue is not yet fixed. Kindly run the fix command and choose this issue to fix:\n"
+            )
+            for f in unfixed_findings:
+                loc = (
+                    f"{f.file_path}:{f.line_number}"
+                    if f.line_number
+                    else str(f.file_path)
+                )
+                console.print(
+                    f"  - [bold cyan][{f.rule_id}][/bold cyan] {f.message or f.title} (at {loc})"
+                )
+            console.print("")
+            raise typer.Exit(code=0)
+
+        # Build session using matched applied proposals
+        unique_applied: list[AppliedProposal] = []
+        seen_keys: set[tuple[str, str, str]] = set()
+        for ap in matched_applied_proposals:
+            k = (ap.proposal.finding_id, ap.proposal.rule_id, ap.proposal.target_file)
+            if k not in seen_keys:
+                seen_keys.add(k)
+                unique_applied.append(ap)
+
+        session = FixSession(
+            session_id=saved_session.session_id if saved_session else str(uuid4()),
+            source=str(diag_path),
+            findings_input=selected_findings,
+            proposals=[ap.proposal for ap in unique_applied],
+            applied_proposals=unique_applied,
         )
-        raise typer.Exit(code=0)
+    else:
+        runner = DoctorRunner()
+        session = runner.run(
+            selected_findings,
+            root_dir=root_dir,
+            dry_run=dry_run,
+            ai_only=ai_only,
+            offline_only=(not enhance and not ai_only),
+        )
 
+        if not session.proposals:
+            console.print(
+                "\n[bold yellow]![/bold yellow] The issue is not yet fixed. Kindly run the fix command and choose this issue to fix:\n"
+            )
+            for f in selected_findings:
+                loc = (
+                    f"{f.file_path}:{f.line_number}"
+                    if f.line_number
+                    else str(f.file_path)
+                )
+                console.print(
+                    f"  - [bold cyan][{f.rule_id}][/bold cyan] {f.message or f.title} (at {loc})"
+                )
+            console.print("")
+            raise typer.Exit(code=0)
+
+        if not dry_run and session.applied_count > 0:
+            fixes_path = diag_path.parent / "fixes.json"
+            _save_fix_session(fixes_path, session)
+
+    # Handle dry-run or PR preview
     if dry_run:
-        console.print(
-            f"\n[cyan]--- Workflow Doctor Dry Run ({len(session.proposals)} proposed fix(es)) ---[/cyan]\n"
+        summary_table = Table(
+            title=f"\n--- Workflow Doctor Dry Run ({len(session.proposals)} proposed fix(es)) ---",
+            show_lines=True,
+            header_style="bold cyan",
         )
-        diff_table = Table(show_lines=True)
-        diff_table.add_column("Rule", style="bold cyan", width=8)
-        diff_table.add_column("Target File", width=20)
-        diff_table.add_column("Layer Strategy", style="bold yellow", width=14)
-        diff_table.add_column("Rationale", overflow="fold")
+        summary_table.add_column("Rule", style="bold magenta")
+        summary_table.add_column("Target File", style="green")
+        summary_table.add_column("Layer Strategy", style="cyan")
+        summary_table.add_column("Rationale")
 
         for prop in session.proposals:
             prop_path = Path(prop.target_file)
@@ -988,19 +1236,256 @@ def fix(  # noqa: C901, PLR0912, PLR0915
                 if prop_path.is_absolute()
                 else str(prop_path)
             )
-            diff_table.add_row(
+            summary_table.add_row(
                 prop.rule_id,
                 rel_file,
                 prop.strategy_layer.name,
                 prop.explanation,
             )
-
-        console.print(diff_table)
+        console.print(summary_table)
         console.print(
             f"\n[bold green]✓[/bold green] Dry-run complete for session [bold cyan]{session.session_id[:8]}[/bold cyan] ({len(session.proposals)} proposal(s) ready).\n"
         )
+
+        if create_pr:
+            preview_pub = GitHubPublisher(
+                token=token_val or "dummy_token",
+                repository=repo_val or "owner/repo",
+            )
+            preview_session = session.model_copy(deep=True)
+            if not preview_session.applied_proposals and preview_session.proposals:
+                preview_session.applied_proposals = [
+                    AppliedProposal(
+                        proposal=p,
+                        applied=True,
+                        outcome=ApplyOutcome(
+                            success=True,
+                            modified_file=Path(p.target_file),
+                            verification_passed=True,
+                        ),
+                    )
+                    for p in preview_session.proposals
+                ]
+            preview_body = preview_pub.build_pr_body(
+                preview_session, linked_issues=[issue] if issue else None
+            )
+            pr_preview_title = f"[Workflow Clinic] Automated Remediation — {preview_session.applied_count} issue(s) fixed"
+            console.print(
+                "\n[bold cyan]--- Pull Request Preview (Dry Run) ---[/bold cyan]\n"
+            )
+            console.print(
+                Panel(
+                    Markdown(preview_body),
+                    title=f"[bold]{escape(pr_preview_title)}[/bold]",
+                    border_style="cyan",
+                )
+            )
         raise typer.Exit(code=0)
 
-    console.print(
-        f"\n[bold green]✓[/bold green] Workflow Doctor completed session [bold cyan]{session.session_id[:8]}[/bold cyan]: {session.applied_count}/{len(session.proposals)} fix(es) applied successfully.\n"
+    if not standalone_create_pr:
+        console.print(
+            f"\n[bold green]✓[/bold green] Workflow Doctor completed session [bold cyan]{session.session_id[:8]}[/bold cyan]: {session.applied_count}/{len(session.proposals)} fix(es) applied successfully.\n"
+        )
+
+    if create_pr:
+        if session.applied_count == 0:
+            console.print(
+                "[yellow]No fixes were applied — skipping PR creation.[/yellow]\n"
+            )
+        elif not use_github:
+            publisher = GitHubPublisher(
+                token="local_token",  # noqa: S106
+                repository="local/repo",
+            )
+            pr_body = publisher.build_pr_body(
+                session, linked_issues=[issue] if issue else None
+            )
+            pr_title = f"[Workflow Clinic] Automated Remediation — {session.applied_count} issue(s) fixed"
+            full_pr_content = f"# {pr_title}\n\n{pr_body}"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(full_pr_content, encoding="utf-8")
+            console.print(
+                f"[bold green]✓[/bold green] Exported Pull Request summary to [bold cyan]{output}[/bold cyan]\n"
+            )
+        else:
+            try:
+                publisher = GitHubPublisher(
+                    token=str(token_val or ""),
+                    repository=str(repo_val or ""),
+                )
+                linked_issues: list[int] = [issue] if issue else []
+                if not issue:
+                    with contextlib.suppress(Exception):
+                        open_issues = publisher.fetch_all_clinic_issues()
+                        modified_names = {
+                            mf.name if isinstance(mf, Path) else str(mf)
+                            for mf in session.modified_files
+                        }
+                        repaired_fps = {
+                            f.fingerprint.hash
+                            for f in report.findings
+                            if f.fingerprint
+                            and (
+                                f.file_path in modified_names
+                                or Path(f.file_path).name in modified_names
+                            )
+                        }
+                        for open_num, open_fps in open_issues:
+                            if open_fps & repaired_fps:
+                                linked_issues.append(open_num)
+
+                with console.status(
+                    "[bold cyan]Publishing Pull Request to GitHub...[/bold cyan]"
+                ):
+                    pr_info = publisher.publish_pull_request(
+                        session=session,
+                        root_dir=root_dir,
+                        branch_name=branch_name,
+                        base_branch=base_branch,
+                        linked_issues=linked_issues,
+                    )
+                console.print(
+                    f"[bold green]✓ Created Pull Request #[/bold green][bold cyan]{pr_info.number}[/bold cyan] on [bold]{escape(repo_val or '')}[/bold]: [link={pr_info.url}]{pr_info.url}[/link]\n"
+                )
+            except GitHubPublisherError as e:
+                err_console.print(
+                    f"[red]Failed to publish Pull Request:[/red] {escape(str(e))}"
+                )
+                raise typer.Exit(code=1) from e
+
+
+@app.command(name="create-pr")
+def create_pr_cmd(
+    target: Annotated[
+        str,
+        typer.Argument(
+            help="Path to local workflow directory, diagnosis.json file, or target repository.",
+        ),
+    ] = ".",
+    all_fixes: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--all",
+            "-y",
+            help="Apply all proposed fixes non-interactively before creating Pull Request.",
+        ),
+    ] = False,
+    dry_run: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Preview PR body and diffs without modifying files on disk or posting to GitHub.",
+        ),
+    ] = False,
+    preview: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--preview",
+            help="Render a Markdown preview of the PR in terminal before writing to disk/GitHub.",
+        ),
+    ] = False,
+    local: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--local",
+            help="Force local Markdown file export (default: pr.md) without publishing to GitHub API.",
+        ),
+    ] = False,
+    output: Annotated[
+        Path,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output Markdown file path for local export (default: pr.md).",
+        ),
+    ] = Path("pr.md"),
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            "-t",
+            help="GitHub Personal Access Token (PAT). Overrides GITHUB_TOKEN env var.",
+        ),
+    ] = None,
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo",
+            "-r",
+            help="Target GitHub repository in 'owner/repo' format. Overrides GITHUB_REPOSITORY env var.",
+        ),
+    ] = None,
+    branch_name: Annotated[
+        str | None,
+        typer.Option(
+            "--branch-name",
+            "-b",
+            help="Custom head branch name for the published Pull Request.",
+        ),
+    ] = None,
+    base_branch: Annotated[
+        str | None,
+        typer.Option(
+            "--base-branch",
+            help="Base branch for the published Pull Request (defaults to repository default branch).",
+        ),
+    ] = None,
+    issue: Annotated[
+        int | None,
+        typer.Option(
+            "--issue",
+            "-i",
+            help="Target a specific GitHub issue number to resolve with automated fixes.",
+        ),
+    ] = None,
+    rules: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--rule",
+            "-r",
+            help="Filter findings/fixes to specific rule codes (e.g. --rule W001 --rule W002).",
+        ),
+    ] = None,
+    enhance: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--enhance",
+            "-e",
+            help="Run hybrid 3-tier cascade with AI Critic to identify and repair complex semantic issues (AI001+).",
+        ),
+    ] = False,
+    ai_only: Annotated[  # noqa: FBT002
+        bool,
+        typer.Option(
+            "--ai-only",
+            help="Force all findings (W001-W004, AI001+) to be repaired exclusively using AI/LLM.",
+        ),
+    ] = False,
+) -> None:
+    """Generate verified fixes and create a GitHub Pull Request or export PR details locally to pr.md."""
+    fix(
+        target=target,
+        rule=rules,
+        all_issues=all_fixes,
+        dry_run=dry_run,
+        enhance=enhance,
+        ai_only=ai_only,
+        token=token,
+        repo=repo,
+        create_pr=True,
+        standalone_create_pr=True,
+        local=local,
+        output=output,
+        issue=issue,
+        base_branch=base_branch,
+        branch_name=branch_name,
     )
+    if preview and not dry_run and output.exists():
+        console.print("\n[bold cyan]--- Pull Request Content ---[/bold cyan]\n")
+        console.print(
+            Panel(
+                Markdown(output.read_text(encoding="utf-8")),
+                title="[bold]Pull Request Export Preview[/bold]",
+                border_style="cyan",
+            )
+        )

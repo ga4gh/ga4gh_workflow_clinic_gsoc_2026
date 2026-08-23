@@ -42,7 +42,7 @@ process PROC_THREE {
     cpus 2
 }"""
     start, end = get_process_line_range(code, "PROC_TWO")
-    assert start == 4
+    assert start == 5
     assert end == 11
 
 

@@ -91,6 +91,47 @@ If you are triaging issues across a GitHub repository, pass credentials to synch
 workflow-clinic fix --repo owner/my-pipeline --token ghp_xxxx
 ```
 
+### 7. Pull Request Creation & Publishing (`create-pr` / `--create-pr`)
+
+You can generate Pull Request payloads locally or publish them directly to GitHub without needing a local Git clone or credential setup:
+
+#### A. Standalone `create-pr` command:
+```bash
+# Export Pull Request markdown summary locally to pr.md
+workflow-clinic create-pr diagnosis.json --all --local
+
+# Preview Pull Request markdown in terminal
+workflow-clinic create-pr diagnosis.json --all --preview --local
+
+# Publish Pull Request directly to GitHub
+workflow-clinic create-pr diagnosis.json --all --repo owner/my-pipeline --token ghp_xxxx
+```
+
+#### B. In-line with `fix` (`--create-pr` / `-p`):
+```bash
+# Apply fixes and open a Pull Request directly on GitHub
+workflow-clinic fix diagnosis.json -y -p --repo owner/my-pipeline --token ghp_xxxx
+
+# Preview the exact Pull Request Markdown body in terminal without modifying files
+workflow-clinic fix diagnosis.json -y -p --dry-run --repo owner/my-pipeline
+```
+
+Each Pull Request or `pr.md` includes:
+- **Session summary** with rule IDs and strategy layers (`LAYER1_AST`, `LAYER2_REGEX`, `LAYER3_AI`).
+- **Applied modifications table** with process names, target files, and line numbers.
+- **Interactive collapsible diffs** for every modified workflow file.
+- **`Closes #<issue>` keywords** to automatically resolve linked diagnostic issues when merged.
+- **AST compilation verification status**.
+
+### 8. Targeted Remote Issue Resolution (`--issue`)
+
+To resolve a specific diagnostic issue reported by Workflow Clinic, provide the issue number:
+
+```bash
+# Fetch findings from Issue #42, apply verified fixes, and open a resolving PR
+workflow-clinic fix --issue 42 --create-pr --repo owner/my-pipeline --token ghp_xxxx
+```
+
 ---
 
 ## 🐍 Python API Usage

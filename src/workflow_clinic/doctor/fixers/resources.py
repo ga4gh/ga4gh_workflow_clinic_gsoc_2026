@@ -4,7 +4,11 @@ import re
 from pathlib import Path
 
 from workflow_clinic.doctor.base import BaseFixer, FixerRegistry
-from workflow_clinic.doctor.patcher import inject_directive
+from workflow_clinic.doctor.patcher import (
+    detect_process_indentation,
+    get_process_line_range,
+    inject_directive,
+)
 from workflow_clinic.models.diagnosis import Finding
 from workflow_clinic.models.fix import FixProposal, FixStrategyLayer
 from workflow_clinic.models.workflow_bundle import WorkflowBundle
@@ -32,7 +36,7 @@ class ResourceASTFixer(BaseFixer):
         """
         return finding.rule_id == "W002"
 
-    def generate_proposal(  # noqa: C901, PLR0912
+    def generate_proposal(  # noqa: C901, PLR0912, PLR0915
         self,
         finding: Finding,
         bundle: WorkflowBundle | None = None,
@@ -98,13 +102,34 @@ class ResourceASTFixer(BaseFixer):
                 f"Inject default CPU limit 'cpus {DEFAULT_CPUS}' "
                 f"into process '{process_name}'."
             )
+            header_pattern = re.compile(
+                rf"^[ \t]*process\s+{re.escape(process_name)}\s*\{{", re.MULTILINE
+            )
+            match = header_pattern.search(source_code)
+            if not match:
+                header_pattern = re.compile(
+                    rf"process\s+{re.escape(process_name)}\s*\{{", re.MULTILINE
+                )
+                match = header_pattern.search(source_code)
+
+            if match:
+                original_snippet = match.group(0)
+                start_line, end_line = get_process_line_range(source_code, process_name)
+                indent = detect_process_indentation(
+                    source_code.splitlines(), start_line, end_line
+                )
+                proposed_snippet = f"{original_snippet}\n{indent}cpus {DEFAULT_CPUS}  // TODO: Adjust based on tool multi-threading requirements"
+            else:
+                original_snippet = source_code
+                proposed_snippet = patched_code
+
             return FixProposal(
                 finding_id=getattr(finding, "id", "") or f"W002:{process_name}",
                 rule_id=self.rule_id,
                 category=getattr(finding, "category", "") or "resources",
                 target_file=target_file,
-                original_snippet=source_code,
-                proposed_snippet=patched_code,
+                original_snippet=original_snippet,
+                proposed_snippet=proposed_snippet,
                 explanation=explanation,
                 strategy_layer=self.strategy_layer,
                 line_number=getattr(finding, "line_number", None),
@@ -122,13 +147,34 @@ class ResourceASTFixer(BaseFixer):
                 f"Inject default Memory limit 'memory \"{DEFAULT_MEMORY}\"' "
                 f"into process '{process_name}'."
             )
+            header_pattern = re.compile(
+                rf"^[ \t]*process\s+{re.escape(process_name)}\s*\{{", re.MULTILINE
+            )
+            match = header_pattern.search(source_code)
+            if not match:
+                header_pattern = re.compile(
+                    rf"process\s+{re.escape(process_name)}\s*\{{", re.MULTILINE
+                )
+                match = header_pattern.search(source_code)
+
+            if match:
+                original_snippet = match.group(0)
+                start_line, end_line = get_process_line_range(source_code, process_name)
+                indent = detect_process_indentation(
+                    source_code.splitlines(), start_line, end_line
+                )
+                proposed_snippet = f"{original_snippet}\n{indent}memory '{DEFAULT_MEMORY}'  // TODO: Adjust based on tool memory requirements"
+            else:
+                original_snippet = source_code
+                proposed_snippet = patched_code
+
             return FixProposal(
                 finding_id=getattr(finding, "id", "") or f"W002:{process_name}",
                 rule_id=self.rule_id,
                 category=getattr(finding, "category", "") or "resources",
                 target_file=target_file,
-                original_snippet=source_code,
-                proposed_snippet=patched_code,
+                original_snippet=original_snippet,
+                proposed_snippet=proposed_snippet,
                 explanation=explanation,
                 strategy_layer=self.strategy_layer,
                 line_number=getattr(finding, "line_number", None),

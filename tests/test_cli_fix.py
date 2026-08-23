@@ -215,9 +215,8 @@ def test_fix_cli_no_fixer_registered_for_rule(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["fix", str(tmp_path), "--all"])
     assert result.exit_code == 0
-    assert (
-        "No registered fixers available for the selected findings yet" in result.output
-    )
+    assert "The issue is not yet fixed" in result.output
+    assert "W999" in result.output
 
 
 def test_fix_cli_github_source_requires_token(monkeypatch: pytest.MonkeyPatch) -> None:

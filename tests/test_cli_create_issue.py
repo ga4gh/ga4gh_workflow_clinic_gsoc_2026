@@ -19,7 +19,7 @@ def _clear_github_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_parse_selection_utility() -> None:
     """Verify parse_selection handles all selection string input variations."""
     assert parse_selection("all", 5) == [0, 1, 2, 3, 4]
-    assert parse_selection("", 5) == [0, 1, 2, 3, 4]
+    assert parse_selection("", 5) == []
     assert parse_selection("a", 5) == [0, 1, 2, 3, 4]
     assert parse_selection("1", 5) == [0]
     assert parse_selection("1, 3", 5) == [0, 2]

@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 
 try:
-    from groovy_parser.parser import parse_and_digest_groovy_content
-    from lark.exceptions import LarkError
+    from groovy_parser.parser import parse_and_digest_groovy_content  # noqa: F401
+    from lark.exceptions import LarkError  # noqa: F401
 
     _HAS_GROOVY_PARSER = True
 except ImportError:
@@ -18,9 +18,6 @@ def get_process_line_range(  # noqa: C901, PLR0912, PLR0915
 ) -> tuple[int, int]:
     """Find the 1-based (start_line, end_line) range of a process definition in Nextflow code.
 
-    Attempts AST parsing via groovy_parser first. If AST parsing fails or line numbers are missing,
-    falls back to string-safe regex matching process process_name { ... }.
-
     Args:
         code: Full source code text of the Nextflow file.
         process_name: Name of the process block to find.
@@ -30,29 +27,18 @@ def get_process_line_range(  # noqa: C901, PLR0912, PLR0915
     """
     lines = code.splitlines()
 
-    # Try AST extraction first
-    if _HAS_GROOVY_PARSER:
-        try:
-            ast, _ = parse_and_digest_groovy_content(code)
-            if isinstance(ast, list):
-                for node in ast:
-                    if (
-                        isinstance(node, dict)
-                        and node.get("type") == "process"
-                        and node.get("name") == process_name
-                    ):
-                        start = node.get("start_line") or node.get("line_number")
-                        end = node.get("end_line")
-                        if start and end:
-                            return (int(start), int(end))
-        except (LarkError, Exception):  # noqa: BLE001, S110
-            pass
-
-    # Regex fallback with string-aware brace matching
+    # Find start line via regex
     process_pattern = re.compile(
-        rf"^\s*process\s+{re.escape(process_name)}\s*\{{", re.MULTILINE
+        rf"^[ \t]*process\s+{re.escape(process_name)}\s*\{{", re.MULTILINE
     )
     match = process_pattern.search(code)
+    if not match:
+        # Fallback to general whitespace/format matching
+        process_pattern = re.compile(
+            rf"process\s+{re.escape(process_name)}\s*\{{", re.MULTILINE
+        )
+        match = process_pattern.search(code)
+
     if not match:
         return (1, len(lines))
 

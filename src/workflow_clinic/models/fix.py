@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import IntEnum
-from pathlib import Path  # noqa: TC003
+from pathlib import Path
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
@@ -101,21 +101,26 @@ class FixSession(BaseModel):
         default=None, description="UTC timestamp when session completed"
     )
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def applied_count(self) -> int:
         """Total count of successfully applied proposals."""
         return sum(1 for p in self.applied_proposals if p.applied)
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def failed_count(self) -> int:
         """Total count of proposals that failed to apply."""
         return sum(1 for p in self.applied_proposals if not p.applied)
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def modified_files(self) -> list[Path]:
         """Unique list of modified file paths on disk."""
         files: set[Path] = set()
         for p in self.applied_proposals:
             if p.outcome and p.outcome.modified_file:
                 files.add(p.outcome.modified_file)
+            elif p.applied and p.proposal.target_file:
+                files.add(Path(p.proposal.target_file))
         return list(files)

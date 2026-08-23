@@ -8,6 +8,7 @@ from workflow_clinic.reporting.github_publisher import (
     GitHubPublisherError,
     GitHubRepoNotFoundError,
     PublishedIssueInfo,
+    PublishedPullRequestInfo,
 )
 from workflow_clinic.reporting.issue_generator import (
     GeneratedIssue,
@@ -25,6 +26,7 @@ __all__ = [
     "GitHubPublisherError",
     "GitHubRepoNotFoundError",
     "PublishedIssueInfo",
+    "PublishedPullRequestInfo",
     "compute_fingerprint",
     "extract_fingerprints",
     "filter_new_findings",
