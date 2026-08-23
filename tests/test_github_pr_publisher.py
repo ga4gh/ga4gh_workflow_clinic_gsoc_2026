@@ -29,6 +29,7 @@ from workflow_clinic.reporting.github_publisher import (
     GitHubPublisherError,
     GitHubRepoNotFoundError,
     PublishedPullRequestInfo,
+    apply_proposal_to_content,
 )
 from workflow_clinic.rules import Severity
 
@@ -366,7 +367,6 @@ def test_cli_fix_dry_run_pr_preview(tmp_path: Path) -> None:
     )
     report = DiagnosisReport(
         workflow_name="test_pipeline",
-        workflow_path=str(pipeline_file),
         findings=[finding],
     )
     diag_file.write_text(report.model_dump_json(), encoding="utf-8")
@@ -415,7 +415,6 @@ def test_cli_fix_create_pr_success(tmp_path: Path) -> None:
     )
     report = DiagnosisReport(
         workflow_name="test_pipeline",
-        workflow_path=str(pipeline_file),
         findings=[finding],
     )
     diag_file.write_text(report.model_dump_json(), encoding="utf-8")
@@ -483,7 +482,6 @@ def test_cli_create_pr_cmd_local_export(tmp_path: Path) -> None:
     )
     report = DiagnosisReport(
         workflow_name="test_pipeline",
-        workflow_path=str(pipeline_file),
         findings=[finding],
     )
     diag_file.write_text(report.model_dump_json(), encoding="utf-8")
@@ -534,7 +532,6 @@ def test_cli_create_pr_cmd_unfixed_findings_shows_warning(tmp_path: Path) -> Non
     )
     report = DiagnosisReport(
         workflow_name="test_pipeline",
-        workflow_path=str(pipeline_file),
         findings=[finding],
     )
     diag_file.write_text(report.model_dump_json(), encoding="utf-8")
@@ -566,7 +563,6 @@ def test_cli_create_pr_cmd_remote_publishing(tmp_path: Path) -> None:
     )
     report = DiagnosisReport(
         workflow_name="test_pipeline",
-        workflow_path=str(pipeline_file),
         findings=[finding],
     )
     diag_file.write_text(report.model_dump_json(), encoding="utf-8")
@@ -672,7 +668,6 @@ def test_cli_create_pr_cmd_deduplication(tmp_path: Path) -> None:
     )
     report = DiagnosisReport(
         workflow_name="test_pipeline",
-        workflow_path=str(pipeline_file),
         findings=[finding],
     )
     diag_file.write_text(report.model_dump_json(), encoding="utf-8")
@@ -769,3 +764,62 @@ def test_publish_pr_isolates_session_changes(tmp_path: Path) -> None:
     # The committed content should have container 'test:latest' (original clean content) and cpus 4 (proposal 2)
     expected_content = "process TEST {\n    container 'test:latest'\n    cpus 4\n}\n"
     assert call_kwargs["content"] == expected_content
+
+
+def test_apply_proposal_to_content_raises_when_snippet_missing() -> None:
+    """Verify apply_proposal_to_content raises GitHubPublisherError when original_snippet not found."""
+    prop = FixProposal(
+        finding_id="f1",
+        rule_id="W001",
+        category="portability",
+        target_file="main.nf",
+        original_snippet="non_existent_snippet",
+        proposed_snippet="new_snippet",
+        explanation="Add missing container directive",
+        strategy_layer=FixStrategyLayer.LAYER1_AST,
+    )
+    with pytest.raises(GitHubPublisherError, match="Original snippet not found"):
+        apply_proposal_to_content("content without target snippet", prop)
+
+
+def test_publish_pr_raises_when_file_outside_root(tmp_path: Path) -> None:
+    """Verify publish_pull_request raises GitHubPublisherError when modified file is outside root_dir."""
+    outside_file = tmp_path.parent / "outside.nf"
+    outside_file.write_text("process OUTSIDE {}\n", encoding="utf-8")
+
+    prop = FixProposal(
+        finding_id="f1",
+        rule_id="W001",
+        category="portability",
+        target_file=str(outside_file),
+        original_snippet="process OUTSIDE {}",
+        proposed_snippet="process OUTSIDE { container 'ubuntu:22.04' }",
+        explanation="Add container directive",
+        strategy_layer=FixStrategyLayer.LAYER1_AST,
+    )
+    applied = AppliedProposal(
+        proposal=prop,
+        applied=True,
+        outcome=ApplyOutcome(
+            success=True,
+            modified_file=outside_file,
+            verification_passed=True,
+        ),
+    )
+    session = FixSession(
+        session_id="session_outside",
+        source="main.nf",
+        proposals=[prop],
+        applied_proposals=[applied],
+    )
+    publisher = GitHubPublisher(token="ghp_test_token_1234", repository="owner/repo")
+    mock_repo = MagicMock()
+    mock_branch = MagicMock()
+    mock_branch.commit.sha = "1234567890abcdef"
+    mock_repo.get_branch.return_value = mock_branch
+
+    with (
+        patch.object(publisher, "_get_repo", return_value=mock_repo),
+        pytest.raises(GitHubPublisherError, match="is outside repository root"),
+    ):
+        publisher.publish_pull_request(session=session, root_dir=tmp_path)

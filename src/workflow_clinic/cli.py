@@ -1056,6 +1056,8 @@ def fix(  # noqa: C901, PLR0912, PLR0915
     for cat in grouped_findings:
         if cat not in stable_categories:
             stable_categories.append(cat)
+    # Filter to only categories actually present in grouped_findings so displayed option numbers are contiguous
+    stable_categories = [cat for cat in stable_categories if cat in grouped_findings]
 
     # Determine selected findings
     is_tty = sys.stdin.isatty() or os.environ.get("FORCE_INTERACTIVE") == "1"

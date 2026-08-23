@@ -97,6 +97,13 @@ def _get_rate_limit_reset_utc(g: Github) -> str:
 
 def apply_proposal_to_content(content: str, proposal: FixProposal) -> str:
     """Apply a FixProposal in memory to the provided content string."""
+    if proposal.original_snippet not in content:
+        msg = (
+            f"Original snippet not found for proposal {proposal.rule_id} "
+            f"in '{proposal.target_file}' while building PR content."
+        )
+        raise GitHubPublisherError(msg)
+
     if proposal.line_number and proposal.line_number > 0:
         line_num: int = proposal.line_number
         occurrences: list[int] = []
@@ -354,7 +361,7 @@ class GitHubPublisher:
             "| :--- | :--- | :--- | :--- | :--- |",
         ]
 
-        for applied in session.applied_proposals:
+        for applied in [ap for ap in session.applied_proposals if ap.applied]:
             p = applied.proposal
             line_str = str(p.line_number) if p.line_number else "N/A"
             explanation = (
@@ -368,7 +375,9 @@ class GitHubPublisher:
 
         lines.extend(["", "### 🔍 Detailed Changes", ""])
 
-        for idx, applied in enumerate(session.applied_proposals, start=1):
+        for idx, applied in enumerate(
+            [ap for ap in session.applied_proposals if ap.applied], start=1
+        ):
             p = applied.proposal
             lines.extend(
                 [
@@ -400,7 +409,9 @@ class GitHubPublisher:
         # Embed fingerprints for deduplication
         fingerprints: list[str] = []
         applied_finding_ids = {
-            ap.proposal.finding_id for ap in session.applied_proposals if ap.applied
+            ap.proposal.finding_id.lower().strip()
+            for ap in session.applied_proposals
+            if ap.applied and ap.proposal.finding_id
         }
         for finding in session.findings_input:
             fp_hash = ""
@@ -409,20 +420,10 @@ class GitHubPublisher:
             elif finding.id:
                 fp_hash = finding.id.lower().strip()
 
+            finding_id_clean = finding.id.lower().strip() if finding.id else ""
             is_applied = (
-                (finding.id and finding.id in applied_finding_ids)
-                or (fp_hash and fp_hash in applied_finding_ids)
-                or any(
-                    ap.proposal.rule_id == finding.rule_id
-                    and (
-                        ap.proposal.target_file == finding.file_path
-                        or Path(ap.proposal.target_file).name
-                        == Path(finding.file_path or "").name
-                    )
-                    for ap in session.applied_proposals
-                    if ap.applied
-                )
-            )
+                finding_id_clean and finding_id_clean in applied_finding_ids
+            ) or (fp_hash and fp_hash in applied_finding_ids)
             if (
                 is_applied
                 and fp_hash
@@ -503,17 +504,23 @@ class GitHubPublisher:
         )
 
         # 3. Commit each modified file to the branch
+        root_dir_resolved = root_dir.resolve()
         for mod_path in session.modified_files:
-            file_path = (root_dir / mod_path).resolve()
+            target = Path(mod_path)
+            resolved_target = (
+                target.resolve()
+                if target.is_absolute()
+                else (root_dir / target).resolve()
+            )
+            try:
+                rel_name = resolved_target.relative_to(root_dir_resolved).as_posix()
+            except ValueError as err:
+                msg = f"Modified file '{mod_path}' is outside repository root '{root_dir}'."
+                raise GitHubPublisherError(msg) from err
+
+            file_path = resolved_target
             if not file_path.is_file():
                 continue
-            if isinstance(mod_path, Path):
-                try:
-                    rel_name = mod_path.relative_to(root_dir).as_posix()
-                except ValueError:
-                    rel_name = mod_path.name
-            else:
-                rel_name = str(mod_path)
 
             # Try to fetch clean content from remote repository base branch
             try:
@@ -522,9 +529,20 @@ class GitHubPublisher:
                     content = file_path.read_text(encoding="utf-8")
                 else:
                     content = remote_file.decoded_content.decode("utf-8")
-            except Exception:  # noqa: BLE001
-                # Fallback to local file if not found/accessible on remote base branch
+            except UnknownObjectException:
+                # Expected when file does not yet exist on remote base branch
                 content = file_path.read_text(encoding="utf-8")
+            except (RateLimitExceededException, BadCredentialsException):
+                raise
+            except GithubException as exc:
+                if exc.status == 404:  # noqa: PLR2004
+                    content = file_path.read_text(encoding="utf-8")
+                else:
+                    msg = f"Failed to fetch '{rel_name}' from GitHub repository: {exc.data if hasattr(exc, 'data') else exc}"
+                    raise GitHubAPIError(msg) from exc
+            except Exception as exc:
+                msg = f"Unexpected error reading '{rel_name}': {exc}"
+                raise GitHubPublisherError(msg) from exc
 
             # Apply only the successfully applied proposals from the current session
             file_proposals = [
