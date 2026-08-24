@@ -1,7 +1,7 @@
 # **Final Report GSoC 2026: Workflow Clinic**
 
 <div style="display: flex; align-items: center; justify-content: center; gap: 40px; margin: 25px 0 35px 0; flex-wrap: wrap;">
-  <img src="../assets/ga4gh-logo.svg" alt="GA4GH Logo" style="height: 50px; width: auto;" />
+  <img src="https://raw.githubusercontent.com/ga4gh/ga4gh_workflow_clinic_gsoc_2026/main/docs/assets/ga4gh-logo.svg" alt="GA4GH Logo" style="height: 50px; width: auto;" />
   <img src="https://elixir-europe.org/sites/default/files/images/elixir-logo.svg" alt="ELIXIR Logo" style="height: 42px; width: auto;" />
   <img src="https://upload.wikimedia.org/wikipedia/commons/0/08/GSoC_logo.svg" alt="Google Summer of Code Logo" style="height: 70px; width: auto;" />
 </div>
@@ -65,9 +65,11 @@ My mentors, **Alex Kanitz** and **Javed Habib**, shaped this project more than a
 
 ## **What I Built: End to End**
 
-Scientific workflows in genomics process gigabytes of data across computing clusters. Moving pipelines to cloud infrastructure (AWS Batch, GCP, Kubernetes, GA4GH WES/TES) frequently fails due to unpinned containers (`W001`), missing compute limits (`W002`), hardcoded paths (`W003`), or leaked secrets (`W004`).
+Modern life sciences research depends on computational genomics workflows processing gigabytes to terabytes of sequencing data across heterogeneous clusters ([Wratten et al., *Nature Methods* 2021](https://doi.org/10.1038/s41592-021-01254-9)). The **Global Alliance for Genomics and Health (GA4GH)** establishes international standards for genomic data sharing ([Rehm et al., *Cell Genomics* 2021](https://doi.org/10.1016/j.xgen.2021.100029)) and cloud computing interoperability via the [GA4GH](https://www.ga4gh.org/) Federated Analysis ecosystem, including the [Workflow Execution Service (WES)](https://github.com/ga4gh/workflow-execution-service-schemas) and [Task Execution Service (TES)](https://github.com/ga4gh/task-execution-schemas) specifications.
 
-The entire diagnostic and remediation pipeline operates as a unified flow:
+Scientific pipelines written in workflow management systems such as **Nextflow** ([Di Tommaso et al., *Nature Biotechnology* 2017](https://doi.org/10.1038/nbt.3820)) and **Snakemake** ([Mölder et al., *F1000Research* 2021](https://doi.org/10.12688/f1000research.29032.2)) frequently run into portability blockers when migrating from local servers to cloud environments (AWS Batch, Google Cloud, Kubernetes, GA4GH WES/TES). Common failures include unpinned container images (`W001`), missing CPU/memory limits (`W002`), hardcoded absolute paths (`W003`), or leaked secrets (`W004`).
+
+**Workflow Clinic** solves this by automating both the diagnosis and remediation stages through a single unified pipeline:
 
 ```mermaid
 flowchart LR
@@ -257,6 +259,31 @@ Production pipelines exposed patterns that synthetic test fixtures never exercis
 
 !!! tip "The Core Lesson"
     Synthetic fixtures validate your assumptions. Production workflows reveal what your assumptions missed.
+
+---
+
+## **Engineering with AI: A Transparency Note & Reflection**
+
+Building Workflow Clinic coincided with a generational transition in how software is developed. As an AI/ML undergraduate working on an open-source tool with grounded AI capabilities, I actively integrated generative AI tooling throughout my daily development workflow.
+
+### **The Evolution of My AI Practice**
+In May 2026, my use of AI looked like that of many programmers: asking chat models for isolated code snippets, function syntax, and quick explanations. Over 14 weeks of mentor feedback and 40+ merged pull requests, my approach fundamentally shifted from **naive code generation** to **disciplined pair-engineering and architecture validation**:
+
+1. **Test-Driven Scaffolding:** I used AI to rapidly generate comprehensive test edge cases (e.g. nested closures, unusual Nextflow directive combinations, and malformed Groovy heredocs), which allowed me to test corner cases far faster than writing boilerplate by hand.
+2. **Grammar & AST Exploration:** When building Lark grammar rules for `groovy-parser`, AI assisted in exploring BNF productions, token ambiguities, and Lark tree transformations.
+3. **Drafting & Copyediting:** AI served as a rapid technical copyeditor for drafting descriptive commit messages, comprehensive PR walkthroughs, and MkDocs documentation tables.
+
+### **Where AI Fails: The Need for Deterministic Bounding**
+The most crucial technical lesson I learned is that **probabilistic language models cannot be trusted with correctness in isolation**. Left unchecked, LLMs frequently hallucinated non-existent Nextflow directives, corrupted Groovy block scopes, and produced syntactically plausible but broken code.
+
+This realization directly informed the design of Workflow Clinic itself:
+- We never let the LLM invent rule IDs; it is grounded strictly against `rules_knowledge.toml`.
+- We never let the LLM modify workflow code without running `verify_fix()` AST compilation checks immediately afterward.
+- We require Layer 1 and Layer 2 deterministic fixers to execute before falling back to Layer 3 AI remediation.
+
+### **Advice for Aspiring Programmers**
+> **Treat AI output as untrusted user input.**  
+> Use generative AI aggressively for exploration, brainstorming alternative patterns, and scaffolding tests. But let static analyzers, strict type systems (`mypy`), compiler parsers (`Lark`/AST), and automated CI test suites be the ultimate arbiters of truth.
 
 ---
 
