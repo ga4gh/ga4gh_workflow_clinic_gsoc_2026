@@ -4,19 +4,7 @@ This guide is for contributors who want to understand how parsing works in
 Workflow Clinic, use the parser layer programmatically, or add support for a
 new workflow language (e.g. Snakemake, CWL, WDL).
 
-## Table of Contents
-
-1. [Overview of Parsing Architecture](#1-overview-of-parsing-architecture)
-2. [Using Parsers in Python (Library Imports)](#2-using-parsers-in-python-library-imports)
-3. [How to Write a New Parser Class](#3-how-to-write-a-new-parser-class)
-4. [Common Pitfalls](#4-common-pitfalls)
-5. [How to Write a New Rule](#5-how-to-write-a-new-rule)
-6. [How the Rule Knowledge Store Works](#6-how-the-rule-knowledge-store-works)
-7. [Related Files](#7-related-files)
-
----
-
-## 1. Overview of Parsing Architecture
+## Overview of Parsing Architecture
 
 All workflow files (e.g. Nextflow, Snakemake) must be parsed into a common
 intermediate representation called the **`WorkflowBundle`**. The parser layer
@@ -44,7 +32,7 @@ It requires implementing:
 
 ---
 
-## 2. Using Parsers in Python (Library Imports)
+## Using Parsers in Python (Library Imports)
 
 The `ParserRegistry` automatically routes a workflow file or directory to the
 correct parser based on `can_parse()`.
@@ -117,7 +105,7 @@ Task: ALIGN
 
 ---
 
-## 3. How to Write a New Parser Class
+## How to Write a New Parser Class
 
 To add support for a new workflow language (e.g. `MyLanguage`):
 
@@ -234,7 +222,7 @@ pip install -e ".[dev,mylanguage]"
 
 ---
 
-## 4. Common Pitfalls
+## Common Pitfalls
 
 - **Forgetting to register the parser entry point** in
   `pyproject.toml` — `can_parse()` working in
@@ -249,7 +237,7 @@ pip install -e ".[dev,mylanguage]"
   test that feeds it deliberately broken input and asserts
   `InvalidWorkflowError` is raised.
 
-## 5. How to Write a New Rule
+## How to Write a New Rule
 
 To add a new validation check or portability rule:
 
@@ -312,7 +300,7 @@ Add tests to `tests/test_rules.py` covering your rule class:
 
 ---
 
-## 6. How the Rule Knowledge Store Works
+## How the Rule Knowledge Store Works
 
 To provide context-aware suggestions and GA4GH standards alignment context, Workflow Clinic utilizes a curated, local knowledge base stored as a TOML file.
 
@@ -369,7 +357,7 @@ pip install "workflow-clinic[all_parsers]" # everything available
 
 ---
 
-## 7. Related Files
+## Related Files
 
 | File | Purpose |
 |------|---------|
