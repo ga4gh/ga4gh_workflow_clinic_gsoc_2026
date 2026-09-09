@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -31,18 +30,22 @@ from workflow_clinic.exceptions import (
 from workflow_clinic.models.diagnosis import (
     DiagnosisReport,
 )
-from workflow_clinic.models.diagnosis import (
-    Finding as DiagnosisFinding,
-)
 from workflow_clinic.parsers import ParserRegistry
 from workflow_clinic.reporting import (
     GitHubPublisher,
     GitHubPublisherError,
-    compute_fingerprint,
     filter_new_findings,
     generate_issues,
 )
-from workflow_clinic.rules import RuleRunner, Severity
+from workflow_clinic.rules import Severity
+from workflow_clinic.services import (
+    ExamineCallbacks,
+    ExamineConfig,
+    ExamineCoordinator,
+    ExamineDependencies,
+    ExamineResult,
+)
+from workflow_clinic.services.coordinator import resolve_model
 from workflow_clinic.utils import clone_remote_repo, is_remote_url
 
 logger = logging.getLogger(__name__)
@@ -124,18 +127,97 @@ PROVIDER_MODEL_MAP = [
 
 def _resolve_model(explicit_model: str | None, api_key: str | None) -> str:
     """Resolve the LiteLLM model using CLI flags, env vars, or auto-detection."""
-    if explicit_model:
-        return explicit_model
-    if clinic_model := os.getenv("CLINIC_MODEL"):
-        return clinic_model
-    for env_var, model_name in PROVIDER_MODEL_MAP:
-        if os.getenv(env_var):
-            return model_name
-    if api_key:
-        logger.warning(
-            "--api-key provided without --model. Defaulting to gemini/gemini-3.6-flash."
+    return resolve_model(explicit_model, api_key, custom_logger=logger)
+
+
+def _display_enhance_status(result: ExamineResult, count: int) -> None:
+    """Display AI Critic enhance summary status in terminal."""
+    if result.enhance_failed:
+        if result.enhance_error:
+            err_console.print(
+                f"[yellow]AI Critic enhancement failed: {result.enhance_error}. Using offline fallback.[/yellow]"
+            )
+        err_console.print(
+            f"[yellow]⚠️  AI Critic Enhancement Failed: Using offline Knowledge Store. "
+            f"All {count} findings using offline Knowledge Store.[/yellow]"
         )
-    return "gemini/gemini-3.6-flash"
+    elif not result.has_key:
+        console.print(
+            f"[green]✓[/green] Offline remediation guidance added to {count}/{count} findings (Knowledge Store fallback)"
+        )
+    elif result.fallback_count == count and count > 0:
+        console.print(
+            f"[yellow]⚠️  AI Critic Enhancement Failed: All {count} findings fell back to the offline Knowledge Store.[/yellow]"
+        )
+    elif result.fallback_count > 0:
+        console.print(
+            f"[yellow]⚠️  AI Critic Partial Failure: {result.fallback_count}/{count} findings fell back to the offline Knowledge Store.[/yellow]"
+        )
+    else:
+        console.print(
+            f"[green]✓[/green] AI remediation guidance added to {count}/{count} findings (model: {result.resolved_model})"
+        )
+
+
+def _display_examine_results(result: ExamineResult, *, enhance: bool) -> None:
+    """Render diagnostic table, counts, and exit with code."""
+    findings = result.report.findings
+    if not findings:
+        console.print(
+            "\n[bold green]✓[/bold green] No issues found — "
+            "workflow is clean and cloud-ready!\n"
+        )
+        raise typer.Exit(code=0)
+
+    table = Table(
+        title=f"Diagnostic Findings for '{result.bundle.metadata.name}'",
+        show_lines=True,
+    )
+    table.add_column("Severity", style="bold", width=10)
+    table.add_column("Rule", width=10)
+    table.add_column("Location", style="cyan", no_wrap=True)
+    table.add_column("Process", width=18)
+    table.add_column("Message")
+
+    for finding in findings:
+        try:
+            sev_enum = Severity(finding.severity.lower())
+            color = _SEVERITY_COLORS.get(sev_enum, "white")
+        except ValueError:
+            color = "white"
+
+        loc_str = ""
+        if finding.file_path:
+            loc_name = Path(finding.file_path).name
+            loc_str = (
+                f"{loc_name}:{finding.line_number}" if finding.line_number else loc_name
+            )
+
+        table.add_row(
+            f"[{color}]{finding.severity.upper()}[/{color}]",
+            finding.rule_id,
+            loc_str or "—",
+            finding.process_name or "—",
+            finding.message,
+        )
+
+    console.print()
+    console.print(table)
+
+    n_err = sum(1 for f in findings if f.severity.lower() == "error")
+    n_warn = sum(1 for f in findings if f.severity.lower() == "warning")
+    n_info = sum(1 for f in findings if f.severity.lower() == "info")
+    console.print(
+        f"\n[bold]Summary:[/bold] {n_err} error(s), "
+        f"{n_warn} warning(s), {n_info} info(s)"
+    )
+
+    if enhance:
+        _display_enhance_status(result, len(findings))
+
+    console.print()
+    exit_code = 1 if n_err > 0 else 0
+    raise typer.Exit(code=exit_code)
 
 
 @app.command()
@@ -150,7 +232,7 @@ def list_models() -> None:
 
 
 @app.command()
-def examine(  # noqa: C901, PLR0912, PLR0915
+def examine(
     target: Annotated[
         str,
         typer.Argument(
@@ -199,244 +281,90 @@ def examine(  # noqa: C901, PLR0912, PLR0915
     ] = None,
 ) -> None:
     """Examine a workflow for portability and cloud-readiness issues."""
-    temp_dir_obj = None
-    try:
-        if is_remote_url(target):
-            console.print(
-                f"\n[cyan]Cloning remote repository from '{escape(target)}'...[/cyan]"
+    config = ExamineConfig(
+        target=target,
+        parser_type=parser_type,
+        output=output,
+        enhance=enhance,
+        model=model,
+        api_key=api_key,
+    )
+    callbacks = ExamineCallbacks(
+        on_clone_start=lambda url: console.print(
+            f"\n[cyan]Cloning remote repository from '{escape(url)}'...[/cyan]"
+        ),
+        on_scan_start=lambda name: console.print(
+            f"\n[cyan]Scanning workflow at '{name}'...[/cyan]"
+        ),
+        on_audit_start=lambda: console.print(
+            "[cyan]Performing AI Audit for new issues...[/cyan]"
+        ),
+        on_report_saved=lambda p: console.print(
+            f"[green]✓[/green] Saved diagnosis report to [bold]{escape(str(p))}[/bold]"
+        ),
+    )
+    dependencies = ExamineDependencies(
+        clone_repo_fn=clone_remote_repo,
+        detect_parser_fn=ParserRegistry.detect_parser,
+        get_parser_fn=ParserRegistry.get_parser,
+        load_dotenv_fn=load_dotenv,
+        custom_logger=logger,
+    )
+    coordinator = ExamineCoordinator(
+        config=config,
+        callbacks=callbacks,
+        dependencies=dependencies,
+    )
+
+    if enhance:
+        load_dotenv(override=False)
+        resolved_model = _resolve_model(model, api_key)
+        if not check_model_api_key(resolved_model, api_key):
+            err_console.print(
+                "[yellow]Warning: --enhance requires an LLM API key for auditing and full remediation. "
+                "Falling back to local knowledge store for remediation only.[/yellow]"
             )
-            temp_dir_obj = tempfile.TemporaryDirectory()
-            try:
-                scan_path = clone_remote_repo(target, Path(temp_dir_obj.name))
-            except ParserError as e:
-                err_console.print(f"[red]Remote clone error:[/red] {escape(str(e))}")
-                raise typer.Exit(code=1) from e
+            console.print(
+                f"[yellow]Notice: No LLM API key found for model '{resolved_model}'. "
+                f"Defaulting to local Knowledge Store fallback.[/yellow]"
+            )
+
+    try:
+        with coordinator:
+            result = coordinator.run()
+    except FileNotFoundError as e:
+        err_console.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from e
+    except UnsupportedWorkflowError as e:
+        err_console.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise typer.Exit(code=1) from e
+    except (InvalidWorkflowError, ParserError) as e:
+        if is_remote_url(target) and (
+            "Failed to clone remote repository" in str(e)
+            or "Git executable not found" in str(e)
+        ):
+            err_console.print(f"[red]Remote clone error:[/red] {escape(str(e))}")
         else:
-            scan_path = Path(target).resolve()
-            if not scan_path.exists():
-                err_console.print(
-                    f"[red]Error:[/red] Path '{escape(target)}' does not exist."
-                )
-                raise typer.Exit(code=2)
-
-        # 1. Detect parser
-        if parser_type:
-            parser_name = parser_type
-        else:
-            try:
-                parser_name = ParserRegistry.detect_parser(scan_path)
-            except UnsupportedWorkflowError as e:
-                err_console.print(f"[red]Error:[/red] {escape(str(e))}")
-                raise typer.Exit(code=1) from e
-
-        logger.info("Detected parser: %s", parser_name)
-
-        # 2. Parse workflow
-        console.print(f"\n[cyan]Scanning workflow at '{scan_path.name}'...[/cyan]")
-        try:
-            parser = ParserRegistry.get_parser(parser_name)
-            bundle = parser.parse(scan_path)
-        except (InvalidWorkflowError, ParserError) as e:
             err_console.print(f"[red]Parse error:[/red] {escape(str(e))}")
             is_missing_dependency = isinstance(e, ParserError) or isinstance(
-                e.__cause__, ModuleNotFoundError
+                getattr(e, "__cause__", None), ModuleNotFoundError
             )
             if is_missing_dependency:
-                install_cmd = f"pip install 'workflow-clinic[{parser_name}]'"
+                p_name = parser_type or "nextflow"
+                install_cmd = f"pip install 'workflow-clinic[{p_name}]'"
                 err_console.print(
                     f"[bold]Tip:[/bold] Try installing with: "
                     f"[green]{escape(install_cmd)}[/green]"
                 )
-            raise typer.Exit(code=1) from e
-
-        logger.info(
-            "Parsed workflow '%s' with %d task(s)",
-            bundle.metadata.name,
-            len(bundle.tasks),
+        raise typer.Exit(code=1) from e
+    except OSError as e:
+        err_console.print(
+            f"[red]Error:[/red] Could not write diagnosis report to "
+            f"'{escape(str(output))}': {escape(str(e))}"
         )
+        raise typer.Exit(code=1) from e
 
-        runner = RuleRunner()
-        raw_findings = runner.run(bundle)
-
-        resolved_model: str | None = None
-        has_key = False
-        enhance_failed = False
-
-        if enhance:
-            load_dotenv(override=False)
-            resolved_model = _resolve_model(model, api_key)
-            has_key = check_model_api_key(resolved_model, api_key)
-
-        if enhance:
-            if not has_key:
-                err_console.print(
-                    "[yellow]Warning: --enhance requires an LLM API key for auditing and full remediation. "
-                    "Falling back to local knowledge store for remediation only.[/yellow]"
-                )
-            else:
-                console.print("[cyan]Performing AI Audit for new issues...[/cyan]")
-                agent = AICriticAgent(
-                    model_name=resolved_model or "gemini/gemini-3.6-flash",
-                    api_key=api_key,
-                )
-                audit_findings = agent.audit_workflow(
-                    bundle, static_findings=list(raw_findings)
-                )  # type: ignore[arg-type]
-                raw_findings.extend(audit_findings)  # type: ignore[arg-type]
-
-        findings = []
-        for f in raw_findings:
-            file_p = getattr(f, "file_path", None) or target
-            task_id_val = getattr(f, "task_id", None) or None
-            fp = compute_fingerprint(
-                file_path=file_p,
-                rule_id=f.rule_id,
-                task_id=task_id_val,
-                target_token=f.message,
-            )
-            f_dict = f.model_dump()
-            f_dict["file_path"] = f.file_path or target
-            f_dict["fingerprint"] = fp.model_dump()
-            f_dict["id"] = fp.hash
-            findings.append(DiagnosisFinding.model_validate(f_dict))
-
-        report = DiagnosisReport(
-            workflow_name=bundle.metadata.name,
-            tasks_count=len(bundle.tasks),
-            findings_count=len(findings),
-            findings=findings,
-        )
-
-        if enhance:
-            # Mask API key if logged / traced
-            masked_key = "[MASKED]" if api_key else "None"
-
-            has_key = check_model_api_key(resolved_model, api_key)
-            if not has_key:
-                console.print(
-                    f"[yellow]Notice: No LLM API key found for model '{resolved_model}'. Defaulting to local Knowledge Store fallback.[/yellow]"
-                )
-
-            critic_agent = None
-            try:
-                critic_agent = AICriticAgent(
-                    model_name=resolved_model or "gemini/gemini-3.6-flash",
-                    api_key=api_key,
-                )
-                logger.info(
-                    "Enhancing report with AI Critic using model %s and API key %s",
-                    resolved_model,
-                    masked_key,
-                )
-                result = critic_agent.enhance_report(report)
-                report = result.report
-                fallback_count = result.fallback_count
-            except Exception as e:  # noqa: BLE001
-                err_console.print(
-                    f"[yellow]AI Critic enhancement failed: {e}. Using offline fallback.[/yellow]"
-                )
-                enhance_failed = True
-
-        # Export diagnosis.json
-        try:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(
-                json.dumps(report.model_dump(mode="json"), indent=2) + "\n",
-                encoding="utf-8",
-            )
-            console.print(
-                f"[green]✓[/green] Saved diagnosis report to [bold]{escape(str(output))}[/bold]"
-            )
-        except OSError as e:
-            err_console.print(
-                f"[red]Error:[/red] Could not write diagnosis report to "
-                f"'{escape(str(output))}': {escape(str(e))}"
-            )
-            raise typer.Exit(code=1) from e
-
-        # 4. Display results
-        if not findings:
-            console.print(
-                "\n[bold green]✓[/bold green] No issues found — "
-                "workflow is clean and cloud-ready!\n"
-            )
-            raise typer.Exit(code=0)
-
-        table = Table(
-            title=f"Diagnostic Findings for '{bundle.metadata.name}'",
-            show_lines=True,
-        )
-        table.add_column("Severity", style="bold", width=10)
-        table.add_column("Rule", width=10)
-        table.add_column("Location", style="cyan", no_wrap=True)
-        table.add_column("Process", width=18)
-        table.add_column("Message")
-
-        for finding in findings:
-            try:
-                sev_enum = Severity(finding.severity.lower())
-                color = _SEVERITY_COLORS.get(sev_enum, "white")
-            except ValueError:
-                color = "white"
-
-            loc_str = ""
-            if finding.file_path:
-                loc_name = Path(finding.file_path).name
-                loc_str = (
-                    f"{loc_name}:{finding.line_number}"
-                    if finding.line_number
-                    else loc_name
-                )
-
-            table.add_row(
-                f"[{color}]{finding.severity.upper()}[/{color}]",
-                finding.rule_id,
-                loc_str or "—",
-                finding.process_name or "—",
-                finding.message,
-            )
-
-        console.print()
-        console.print(table)
-
-        # Summary line
-        n_err = sum(1 for f in findings if f.severity.lower() == "error")
-        n_warn = sum(1 for f in findings if f.severity.lower() == "warning")
-        n_info = sum(1 for f in findings if f.severity.lower() == "info")
-        console.print(
-            f"\n[bold]Summary:[/bold] {n_err} error(s), "
-            f"{n_warn} warning(s), {n_info} info(s)"
-        )
-
-        if enhance:
-            if enhance_failed:
-                err_console.print(
-                    f"[yellow]⚠️  AI Critic Enhancement Failed: Using offline Knowledge Store. "
-                    f"All {len(findings)} findings using offline Knowledge Store.[/yellow]"
-                )
-            elif not has_key:
-                console.print(
-                    f"[green]✓[/green] Offline remediation guidance added to {len(findings)}/{len(findings)} findings (Knowledge Store fallback)"
-                )
-            elif fallback_count == len(findings) and len(findings) > 0:
-                console.print(
-                    f"[yellow]⚠️  AI Critic Enhancement Failed: All {len(findings)} findings fell back to the offline Knowledge Store.[/yellow]"
-                )
-            elif fallback_count > 0:
-                console.print(
-                    f"[yellow]⚠️  AI Critic Partial Failure: {fallback_count}/{len(findings)} findings fell back to the offline Knowledge Store.[/yellow]"
-                )
-            else:
-                console.print(
-                    f"[green]✓[/green] AI remediation guidance added to {len(findings)}/{len(findings)} findings (model: {resolved_model})"
-                )
-        console.print()
-
-        exit_code = 1 if n_err > 0 else 0
-        raise typer.Exit(code=exit_code)
-    finally:
-        if temp_dir_obj is not None:
-            temp_dir_obj.cleanup()
+    _display_examine_results(result, enhance=enhance)
 
 
 def parse_selection(raw: str, max_index: int) -> list[int]:
