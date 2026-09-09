@@ -1,5 +1,6 @@
 """Unit tests for ExamineCoordinator service orchestration."""
 
+import importlib.util
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -15,7 +16,10 @@ from workflow_clinic.services.coordinator import (
     ExamineResult,
 )
 
+HAS_NEXTFLOW = importlib.util.find_spec("groovy_parser") is not None
 
+
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
 def test_coordinator_clean_workflow(tmp_path: Path) -> None:
     """Verify coordinator processes a valid, clean workflow without findings."""
     dummy_path = Path(__file__).parent / "fixtures" / "dummy.nf"
@@ -40,6 +44,7 @@ def test_coordinator_clean_workflow(tmp_path: Path) -> None:
     assert data["findings_count"] == 0
 
 
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
 def test_coordinator_flawed_workflow_generates_fingerprints(tmp_path: Path) -> None:
     """Verify coordinator runs static rules and computes finding fingerprints."""
     poor_path = Path(__file__).parent / "fixtures" / "poor_practices.nf"
@@ -83,6 +88,7 @@ def test_coordinator_unsupported_workflow_raises_error(tmp_path: Path) -> None:
         coordinator.run()
 
 
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
 def test_coordinator_callbacks_triggered(tmp_path: Path) -> None:
     """Verify coordinator triggers lifecycle hooks during examination."""
     dummy_path = Path(__file__).parent / "fixtures" / "dummy.nf"
@@ -131,6 +137,7 @@ def test_coordinator_context_manager_cleanup_observable() -> None:
     assert not recorded_temp_dir.exists()
 
 
+@pytest.mark.skipif(not HAS_NEXTFLOW, reason="Nextflow support not installed")
 def test_coordinator_enhance_without_key_uses_knowledge_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
