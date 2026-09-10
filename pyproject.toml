@@ -90,7 +90,7 @@ ignore = [
 known-first-party = ["workflow_clinic"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S106", "PLR2004", "SLF001"]  # asserts, magic values, passwords, and private member checks are standard in tests
+"tests/**" = ["S101", "S106", "PLR2004", "SLF001", "INP001"]  # asserts, magic values, passwords, and test subpackages
 "src/workflow_clinic/cli.py" = ["PLR0913", "PLR0917"]  # Typer CLI commands accept multiple options/arguments as function parameters
 
 # --- Mypy (Type Checker) ---

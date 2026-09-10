@@ -1,0 +1,18 @@
+{
+  "id": "w002_missing_memory",
+  "description": "Process definition lacking memory resource allocation limit.",
+  "workflow_type": "nextflow",
+  "required_concepts": ["memory"],
+  "required_any_of": [["gb", "mb", "ram", "limit", "directive", "resource"]],
+  "forbidden_concepts": ["unlimited"],
+  "finding": {
+    "id": "finding-w002-memory",
+    "rule_id": "W002",
+    "category": "resource_limits",
+    "severity": "MEDIUM",
+    "title": "Missing memory resource limit",
+    "file_path": "modules/star_index.nf",
+    "line_number": 12,
+    "context": "process STAR_INDEX {\n  cpus 8\n  script:\n    \"STAR --runMode genomeGenerate --genomeDir star_idx --genomeFastaFiles ref.fa\"\n}"
+  }
+}

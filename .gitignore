@@ -44,3 +44,6 @@ Thumbs.db
 
 # MkDocs build directory
 site/
+
+# Benchmark outputs
+tests/benchmarks/results/*.json
