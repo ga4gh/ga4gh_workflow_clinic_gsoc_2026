@@ -7,6 +7,13 @@ from workflow_clinic.services.coordinator import (
     ExamineDependencies,
     ExamineResult,
 )
+from workflow_clinic.services.fix_coordinator import (
+    FixCallbacks,
+    FixConfig,
+    FixCoordinator,
+    FixDependencies,
+    FixResult,
+)
 
 __all__ = [
     "ExamineCallbacks",
@@ -14,4 +21,9 @@ __all__ = [
     "ExamineCoordinator",
     "ExamineDependencies",
     "ExamineResult",
+    "FixCallbacks",
+    "FixConfig",
+    "FixCoordinator",
+    "FixDependencies",
+    "FixResult",
 ]
