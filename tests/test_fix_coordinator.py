@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-import shutil
-from pathlib import Path
+from pathlib import Path  # noqa: TC003
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,7 +15,6 @@ from workflow_clinic.models.fix import (
     FixSession,
     FixStrategyLayer,
 )
-from workflow_clinic.services.coordinator import ExamineConfig, ExamineCoordinator
 from workflow_clinic.services.fix_coordinator import (
     FixCallbacks,
     FixConfig,
@@ -25,25 +23,37 @@ from workflow_clinic.services.fix_coordinator import (
     FixResult,
 )
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
-
 
 def _create_sample_diagnosis(
-    target_dir: Path, nf_file_name: str = "poor_practices.nf"
+    target_dir: Path, nf_file_name: str = "main.nf"
 ) -> tuple[Path, Path]:
-    """Helper to examine poor_practices.nf and create diagnosis.json in tmp_path."""
-    poor_fixture = FIXTURES_DIR / "poor_practices.nf"
+    """Helper to create a sample workflow and diagnosis.json in target_dir."""
     dest_nf = target_dir / nf_file_name
-    shutil.copy(poor_fixture, dest_nf)
+    dest_nf.write_text(
+        "process FASTQC {\n    script:\n    'fastqc input'\n}\n", encoding="utf-8"
+    )
 
     diag_file = target_dir / "diagnosis.json"
-    examine_coordinator = ExamineCoordinator(
-        config=ExamineConfig(
-            target=str(dest_nf),
-            output=diag_file,
-        )
-    )
-    examine_coordinator.run()
+    diag_data = {
+        "workflow_name": "sample_pipeline",
+        "tasks_count": 1,
+        "findings_count": 1,
+        "findings": [
+            {
+                "id": "sample_w001_1",
+                "rule_id": "W001",
+                "severity": "CRITICAL",
+                "category": "containerization",
+                "title": "Missing container directive",
+                "message": "Process 'FASTQC' has no container defined.",
+                "process_name": "FASTQC",
+                "file_path": nf_file_name,
+                "line_number": 1,
+                "fingerprint": {"hash": "sample_hash_1"},
+            }
+        ],
+    }
+    diag_file.write_text(json.dumps(diag_data), encoding="utf-8")
     return dest_nf, diag_file
 
 
