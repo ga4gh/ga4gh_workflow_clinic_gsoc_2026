@@ -1,0 +1,18 @@
+{
+  "id": "ai001_shell_pattern",
+  "description": "Unquoted shell variable expansion risking word-splitting and globbing bugs.",
+  "workflow_type": "nextflow",
+  "required_concepts": ["quote"],
+  "required_any_of": [["expansion", "splitting", "globbing", "spaces", "variable", "bash"]],
+  "forbidden_concepts": [],
+  "finding": {
+    "id": "finding-ai001-quotes",
+    "rule_id": "AI001",
+    "category": "best_practices",
+    "severity": "MEDIUM",
+    "title": "Unquoted shell variable expansion in bash block",
+    "file_path": "modules/trim.nf",
+    "line_number": 31,
+    "context": "process TRIM_READS {\n  script:\n    \"fastp -i $raw_reads -o $trimmed_reads\"\n}"
+  }
+}

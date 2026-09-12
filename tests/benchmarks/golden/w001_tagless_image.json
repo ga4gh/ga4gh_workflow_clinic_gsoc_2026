@@ -1,0 +1,18 @@
+{
+  "id": "w001_tagless_image",
+  "description": "Container image reference without any tag or digest specified (defaults implicitly to latest).",
+  "workflow_type": "nextflow",
+  "required_concepts": ["tag"],
+  "required_any_of": [["sha256", "digest", "pinned", "version", "immutable", "specific tag"]],
+  "forbidden_concepts": ["use latest"],
+  "finding": {
+    "id": "finding-w001-tagless",
+    "rule_id": "W001",
+    "category": "containerization",
+    "severity": "HIGH",
+    "title": "Container image has no tag specified",
+    "file_path": "modules/fastqc.nf",
+    "line_number": 15,
+    "context": "process FASTQC {\n  container 'quay.io/biocontainers/fastqc'\n  script:\n    \"fastqc $reads\"\n}"
+  }
+}

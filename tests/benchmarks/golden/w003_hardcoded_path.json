@@ -1,0 +1,18 @@
+{
+  "id": "w003_hardcoded_path",
+  "description": "Process command referencing hardcoded absolute host filesystem path.",
+  "workflow_type": "nextflow",
+  "required_concepts": ["path"],
+  "required_any_of": [["param", "channel", "relative", "input", "projectdir", "basedir", "variable"]],
+  "forbidden_concepts": ["/home/ubuntu/"],
+  "finding": {
+    "id": "finding-w003-path",
+    "rule_id": "W003",
+    "category": "hardcoded_paths",
+    "severity": "HIGH",
+    "title": "Hardcoded absolute path in process script",
+    "file_path": "workflows/alignment.nf",
+    "line_number": 24,
+    "context": "process ALIGN {\n  script:\n    \"python /home/ubuntu/scripts/preprocess.py $input\"\n}"
+  }
+}
