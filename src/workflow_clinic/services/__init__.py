@@ -14,6 +14,14 @@ from workflow_clinic.services.fix_coordinator import (
     FixDependencies,
     FixResult,
 )
+from workflow_clinic.services.publish_coordinator import (
+    PublishCallbacks,
+    PublishConfig,
+    PublishCoordinator,
+    PublishDependencies,
+    PublishMode,
+    PublishResult,
+)
 
 __all__ = [
     "ExamineCallbacks",
@@ -26,4 +34,10 @@ __all__ = [
     "FixCoordinator",
     "FixDependencies",
     "FixResult",
+    "PublishCallbacks",
+    "PublishConfig",
+    "PublishCoordinator",
+    "PublishDependencies",
+    "PublishMode",
+    "PublishResult",
 ]
