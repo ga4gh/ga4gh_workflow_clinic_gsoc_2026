@@ -29,6 +29,7 @@ from workflow_clinic.exceptions import (
 )
 from workflow_clinic.models.diagnosis import (
     DiagnosisReport,
+    Finding,
 )
 from workflow_clinic.parsers import ParserRegistry
 from workflow_clinic.reporting import (
@@ -44,6 +45,11 @@ from workflow_clinic.services import (
     ExamineCoordinator,
     ExamineDependencies,
     ExamineResult,
+    FixCallbacks,
+    FixConfig,
+    FixCoordinator,
+    FixDependencies,
+    FixResult,
 )
 from workflow_clinic.services.coordinator import resolve_model
 from workflow_clinic.utils import clone_remote_repo, is_remote_url
@@ -640,8 +646,136 @@ def create_issue(  # noqa: C901, PLR0912, PLR0915
             raise typer.Exit(code=1) from e
 
 
+def _display_fix_results(result: FixResult) -> None:
+    """Render proposed fix diffs or completion summary and exit."""
+    session = result.session
+    if not session.proposals:
+        console.print(
+            "\n[bold yellow]![/bold yellow] No registered fixers available for the selected findings yet.\n"
+        )
+        raise typer.Exit(code=0)
+
+    if result.dry_run:
+        console.print(
+            f"\n[cyan]--- Workflow Doctor Dry Run ({len(session.proposals)} proposed fix(es)) ---[/cyan]\n"
+        )
+        diff_table = Table(show_lines=True)
+        diff_table.add_column("Rule", style="bold cyan", width=8)
+        diff_table.add_column("Target File", width=20)
+        diff_table.add_column("Layer Strategy", style="bold yellow", width=14)
+        diff_table.add_column("Rationale", overflow="fold")
+
+        for prop in session.proposals:
+            prop_path = Path(prop.target_file)
+            rel_file = (
+                os.path.relpath(prop_path, result.root_dir)
+                if prop_path.is_absolute()
+                else str(prop_path)
+            )
+            diff_table.add_row(
+                prop.rule_id,
+                rel_file,
+                prop.strategy_layer.name,
+                prop.explanation,
+            )
+
+        console.print(diff_table)
+        console.print(
+            f"\n[bold green]✓[/bold green] Dry-run complete for session "
+            f"[bold cyan]{session.session_id[:8]}[/bold cyan] ({len(session.proposals)} proposal(s) ready).\n"
+        )
+        raise typer.Exit(code=0)
+
+    console.print(
+        f"\n[bold green]✓[/bold green] Workflow Doctor completed session "
+        f"[bold cyan]{session.session_id[:8]}[/bold cyan]: "
+        f"{session.applied_count}/{len(session.proposals)} fix(es) applied successfully.\n"
+    )
+
+
+def _verify_github_repo(token: str | None, repo: str | None) -> None:
+    """Validate GitHub token and repository credentials if provided."""
+    token_val = token or os.getenv("GITHUB_TOKEN")
+    repo_val = repo or os.getenv("GITHUB_REPOSITORY")
+    if not repo_val and not token:
+        return
+
+    if not token_val:
+        err_console.print(
+            "[red]Error:[/red] GitHub repository specified but GitHub token is missing. Provide via --token or GITHUB_TOKEN."
+        )
+        raise typer.Exit(code=1)
+    if not repo_val:
+        err_console.print(
+            "[red]Error:[/red] GitHub token specified but repository is missing. Provide via --repo or GITHUB_REPOSITORY."
+        )
+        raise typer.Exit(code=1)
+    try:
+        publisher = GitHubPublisher(token=token_val, repository=repo_val)
+        active_fps = publisher.fetch_active_fingerprints()
+        if active_fps:
+            logger.info(
+                "Fetched %d active fingerprints from GitHub repository %s",
+                len(active_fps),
+                repo_val,
+            )
+    except GitHubPublisherError as e:
+        err_console.print(
+            f"[red]GitHub Authentication/API Error:[/red] {escape(str(e))}"
+        )
+        raise typer.Exit(code=1) from e
+
+
+def _prompt_category_selection(
+    coordinator: FixCoordinator,
+    actionable_findings: list[Finding],
+    workflow_name: str,
+) -> list[Finding]:
+    """Display interactive category table and prompt user for selection."""
+    grouped = coordinator.group_findings_by_category(actionable_findings)
+    categories = list(grouped.keys())
+
+    table = Table(
+        title=f"Diagnostic Categories to Repair for '{workflow_name}'",
+        show_lines=True,
+    )
+    table.add_column("Option", style="bold cyan", width=8)
+    table.add_column("Category Domain", width=22)
+    table.add_column("Rules", style="bold green", width=16)
+    table.add_column("Findings Count", style="bold yellow", width=16)
+
+    for idx, cat in enumerate(categories, 1):
+        cat_findings = grouped[cat]
+        cat_rules = sorted({f.rule_id for f in cat_findings if f.rule_id})
+        rules_str = ", ".join(cat_rules) if cat_rules else "-"
+        table.add_row(
+            f"[{idx}]",
+            cat.replace("_", " ").title(),
+            rules_str,
+            f"{len(cat_findings)} issue(s)",
+        )
+
+    console.print()
+    console.print(table)
+
+    prompt_msg = (
+        f"Select category domains to fix (e.g. 1,{len(categories)} or all) [all]"
+    )
+    raw_input_str = typer.prompt(prompt_msg, default="all")
+    selected_indices = parse_selection(raw_input_str, len(categories))
+    if not selected_indices:
+        err_console.print(
+            "[yellow]No valid category domains selected. Exiting.[/yellow]"
+        )
+        raise typer.Exit(code=0)
+
+    selected_categories = {categories[i] for i in selected_indices}
+    selected_set = {id(f) for cat in selected_categories for f in grouped[cat]}
+    return [f for f in actionable_findings if id(f) in selected_set]
+
+
 @app.command(name="fix")
-def fix(  # noqa: C901, PLR0912, PLR0915
+def fix(
     target: Annotated[
         str,
         typer.Argument(
@@ -703,232 +837,80 @@ def fix(  # noqa: C901, PLR0912, PLR0915
     ] = None,
 ) -> None:
     """Automated Workflow Doctor engine for repairing diagnostic findings in Nextflow & Snakemake pipelines."""
-    target_path = Path(target).resolve()
-    if target_path.is_file() and target_path.suffix == ".json":
-        diag_path = target_path
-        root_dir = target_path.parent
-    elif target_path.is_file():
-        diag_path = target_path.parent / "diagnosis.json"
-        root_dir = target_path.parent
-    else:
-        diag_path = target_path / "diagnosis.json"
-        root_dir = target_path
+    config = FixConfig(
+        target=target,
+        rules=rule,
+        dry_run=dry_run,
+        all_findings=all_issues,
+        enhance=enhance,
+        ai_only=ai_only,
+        token=token,
+        repo=repo,
+    )
+    callbacks = FixCallbacks(
+        on_warning=lambda msg: console.print(f"[yellow]⚠️  {escape(msg)}[/yellow]"),
+        on_ai_findings_discovered=lambda count: console.print(
+            f"[bold cyan]AI Critic identified {count} enhancement finding(s).[/bold cyan]"
+        ),
+    )
+    deps = FixDependencies(
+        runner_factory=DoctorRunner,
+        critic_factory=AICriticAgent,
+        parser_registry=ParserRegistry,
+        check_model_api_key_fn=check_model_api_key,
+    )
+    coordinator = FixCoordinator(config=config, callbacks=callbacks, dependencies=deps)
 
-    if not diag_path.exists():
-        err_console.print(
-            f"[red]Error:[/red] Could not find '[bold]{diag_path.name}[/bold]' at '{escape(str(diag_path.parent))}'."
-        )
+    try:
+        diag_path, root_dir, target_file_filter = coordinator.resolve_paths()
+    except FileNotFoundError as e:
+        err_console.print(f"[red]Error:[/red] {escape(str(e))}")
         err_console.print(
             f"[bold]Tip:[/bold] Run [green]workflow-clinic examine {escape(target)}[/green] first to generate diagnostic findings."
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
     try:
-        raw_json = json.loads(diag_path.read_text(encoding="utf-8"))
-        report = DiagnosisReport.model_validate(raw_json)
+        report = coordinator.load_diagnosis(diag_path)
     except Exception as e:
         err_console.print(
             f"[red]Error:[/red] Failed to parse diagnosis report '{escape(str(diag_path))}': {escape(str(e))}"
         )
         raise typer.Exit(code=1) from e
 
-    token_val = token or os.getenv("GITHUB_TOKEN")
-    repo_val = repo or os.getenv("GITHUB_REPOSITORY")
+    _verify_github_repo(token, repo)
 
-    if repo_val or token:
-        if not token_val:
-            err_console.print(
-                "[red]Error:[/red] GitHub repository specified but GitHub token is missing. Provide via --token or GITHUB_TOKEN."
-            )
-            raise typer.Exit(code=1)
-        if not repo_val:
-            err_console.print(
-                "[red]Error:[/red] GitHub token specified but repository is missing. Provide via --repo or GITHUB_REPOSITORY."
-            )
-            raise typer.Exit(code=1)
+    try:
+        actionable_findings = coordinator.get_actionable_findings(
+            report, root_dir, target_file_filter
+        )
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise typer.Exit(code=1) from e
 
-        try:
-            publisher = GitHubPublisher(token=token_val, repository=repo_val)
-            active_fps = publisher.fetch_active_fingerprints()
-            if active_fps:
-                logger.info(
-                    "Fetched %d active fingerprints from GitHub repository %s",
-                    len(active_fps),
-                    repo_val,
-                )
-        except GitHubPublisherError as e:
-            err_console.print(
-                f"[red]GitHub Authentication/API Error:[/red] {escape(str(e))}"
-            )
-            raise typer.Exit(code=1) from e
-
-    findings = list(report.findings)
-
-    if target_path.is_file() and target_path.suffix in (".nf", ".smk"):
-        target_name = target_path.name
-        matched = [
-            f
-            for f in findings
-            if f.file_path
-            and (
-                Path(f.file_path).name == target_name
-                or (root_dir / f.file_path).resolve() == target_path
-            )
-        ]
-        if matched:
-            findings = matched
-
-    # AI Critic audit (enabled in --enhance and --ai-only modes)
-    if enhance or ai_only:
-        model_name = _resolve_model(None, None)
-        if not check_model_api_key(model_name):
-            if ai_only:
-                err_console.print(
-                    f"[red]Error:[/red] '--ai-only' requires an active LLM API key for '{model_name}'. "
-                    "Please set GEMINI_API_KEY, GROQ_API_KEY, OPENAI_API_KEY, or specify model environment variables."
-                )
-                raise typer.Exit(code=1)
+    if not actionable_findings:
+        if rule:
             console.print(
-                f"[yellow]⚠️  No API key found for '{model_name}' - running offline fixes only (W001-W004).[/yellow]"
+                f"\n[bold yellow]![/bold yellow] No findings matching rule filter(s): {', '.join({r.upper() for r in rule})}\n"
             )
         else:
-            try:
-                workflow_file: Path | None = None
-                if target_path.is_file() and target_path.suffix in (".nf", ".smk"):
-                    workflow_file = target_path
-                else:
-                    for f in report.findings:
-                        if f.file_path:
-                            candidate = (root_dir / f.file_path).resolve()
-                            if candidate.is_file():
-                                workflow_file = candidate
-                                break
-
-                if workflow_file:
-                    parser_name = ParserRegistry.detect_parser(workflow_file)
-                    parser = ParserRegistry.get_parser(parser_name)
-                    bundle = parser.parse(workflow_file)
-                    critic = AICriticAgent(model_name=model_name)
-                    ai_findings = critic.audit_workflow(bundle)
-                    if ai_findings:
-                        findings.extend(ai_findings)
-                        console.print(
-                            f"[bold cyan]AI Critic identified {len(ai_findings)} enhancement finding(s).[/bold cyan]"
-                        )
-            except Exception as e:  # noqa: BLE001
-                logger.warning("AI Critic audit failed: %s", e)
-
-    if not findings:
-        console.print("\n[bold green]✓[/bold green] No actionable findings to fix!\n")
+            console.print(
+                "\n[bold green]✓[/bold green] No actionable findings to fix!\n"
+            )
         raise typer.Exit(code=0)
 
-    if rule:
-        rule_set = {r.upper() for r in rule}
-        findings = [f for f in findings if f.rule_id.upper() in rule_set]
-        if not findings:
-            console.print(
-                f"\n[bold yellow]![/bold yellow] No findings matching rule filter(s): {', '.join(rule_set)}\n"
-            )
-            raise typer.Exit(code=0)
-
-    # Group findings by Category domain for interactive selection
-    grouped_findings: dict[str, list] = {}
-    for f in findings:
-        grouped_findings.setdefault(f.category, []).append(f)
-
-    categories = list(grouped_findings.keys())
-
-    # Determine selected findings
+    # Interactive Category Selection
     is_tty = sys.stdin.isatty() or os.environ.get("FORCE_INTERACTIVE") == "1"
     if all_issues or not is_tty:
         if not is_tty and not all_issues:
             console.print(
                 "[yellow]Non-interactive terminal detected — auto-selecting all findings for fix.[/yellow]"
             )
-        selected_findings = findings
+        selected_findings = actionable_findings
     else:
-        table = Table(
-            title=f"Diagnostic Categories to Repair for '{report.workflow_name}'",
-            show_lines=True,
+        selected_findings = _prompt_category_selection(
+            coordinator, actionable_findings, report.workflow_name
         )
-        table.add_column("Option", style="bold cyan", width=8)
-        table.add_column("Category Domain", width=22)
-        table.add_column("Rules", style="bold green", width=16)
-        table.add_column("Findings Count", style="bold yellow", width=16)
 
-        for idx, cat in enumerate(categories, 1):
-            cat_findings = grouped_findings[cat]
-            cat_rules = sorted({f.rule_id for f in cat_findings if f.rule_id})
-            rules_str = ", ".join(cat_rules) if cat_rules else "-"
-            table.add_row(
-                f"[{idx}]",
-                cat.replace("_", " ").title(),
-                rules_str,
-                f"{len(cat_findings)} issue(s)",
-            )
-
-        console.print()
-        console.print(table)
-
-        prompt_msg = (
-            f"Select category domains to fix (e.g. 1,{len(categories)} or all) [all]"
-        )
-        raw_input_str = typer.prompt(prompt_msg, default="all")
-        selected_indices = parse_selection(raw_input_str, len(categories))
-        if not selected_indices:
-            err_console.print(
-                "[yellow]No valid category domains selected. Exiting.[/yellow]"
-            )
-            raise typer.Exit(code=0)
-
-        selected_categories = {categories[i] for i in selected_indices}
-        selected_findings = [f for f in findings if f.category in selected_categories]
-
-    runner = DoctorRunner()
-    session = runner.run(
-        selected_findings,
-        root_dir=root_dir,
-        dry_run=dry_run,
-        ai_only=ai_only,
-        offline_only=(not enhance and not ai_only),
-    )
-
-    if not session.proposals:
-        console.print(
-            "\n[bold yellow]![/bold yellow] No registered fixers available for the selected findings yet.\n"
-        )
-        raise typer.Exit(code=0)
-
-    if dry_run:
-        console.print(
-            f"\n[cyan]--- Workflow Doctor Dry Run ({len(session.proposals)} proposed fix(es)) ---[/cyan]\n"
-        )
-        diff_table = Table(show_lines=True)
-        diff_table.add_column("Rule", style="bold cyan", width=8)
-        diff_table.add_column("Target File", width=20)
-        diff_table.add_column("Layer Strategy", style="bold yellow", width=14)
-        diff_table.add_column("Rationale", overflow="fold")
-
-        for prop in session.proposals:
-            prop_path = Path(prop.target_file)
-            rel_file = (
-                os.path.relpath(prop_path, root_dir)
-                if prop_path.is_absolute()
-                else str(prop_path)
-            )
-            diff_table.add_row(
-                prop.rule_id,
-                rel_file,
-                prop.strategy_layer.name,
-                prop.explanation,
-            )
-
-        console.print(diff_table)
-        console.print(
-            f"\n[bold green]✓[/bold green] Dry-run complete for session [bold cyan]{session.session_id[:8]}[/bold cyan] ({len(session.proposals)} proposal(s) ready).\n"
-        )
-        raise typer.Exit(code=0)
-
-    console.print(
-        f"\n[bold green]✓[/bold green] Workflow Doctor completed session [bold cyan]{session.session_id[:8]}[/bold cyan]: {session.applied_count}/{len(session.proposals)} fix(es) applied successfully.\n"
-    )
+    result = coordinator.execute(selected_findings=selected_findings)
+    _display_fix_results(result)
