@@ -1,0 +1,18 @@
+{
+  "id": "w002_missing_cpus",
+  "description": "Process definition lacking CPU resource allocation limit.",
+  "workflow_type": "nextflow",
+  "required_concepts": ["cpus"],
+  "required_any_of": [["limit", "directive", "resource", "cores", "allocation"]],
+  "forbidden_concepts": ["unlimited"],
+  "finding": {
+    "id": "finding-w002-cpus",
+    "rule_id": "W002",
+    "category": "resource_limits",
+    "severity": "MEDIUM",
+    "title": "Missing CPU resource limit",
+    "file_path": "modules/bwa_align.nf",
+    "line_number": 8,
+    "context": "process BWA_ALIGN {\n  memory '16 GB'\n  script:\n    \"bwa mem -t 4 ref.fa reads.fq > aln.sam\"\n}"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "edge_case_unicode_path",
+  "description": "Hardcoded path containing non-ASCII / Unicode special characters.",
+  "workflow_type": "nextflow",
+  "required_concepts": ["path"],
+  "required_any_of": [["param", "relative", "channel", "input", "variable", "portable"]],
+  "forbidden_concepts": ["/mnt/données"],
+  "finding": {
+    "id": "finding-edge-unicode",
+    "rule_id": "W003",
+    "category": "hardcoded_paths",
+    "severity": "HIGH",
+    "title": "Hardcoded path containing non-ASCII / special characters",
+    "file_path": "workflows/sub_pipeline_🔬/analyse_échantillons.nf",
+    "line_number": 42,
+    "context": "process ANALYSE_🔬 {\n  script:\n    \"cat /mnt/données_brutes/séquençage.fastq\"\n}"
+  }
+}

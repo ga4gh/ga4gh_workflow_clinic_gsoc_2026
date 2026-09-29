@@ -1,0 +1,18 @@
+{
+  "id": "w001_unpinned_tag",
+  "description": "Container image reference using mutable or unpinned tag like latest.",
+  "workflow_type": "nextflow",
+  "required_concepts": ["tag"],
+  "required_any_of": [["sha256", "digest", "pinned", "version", "immutable"]],
+  "forbidden_concepts": ["use latest"],
+  "finding": {
+    "id": "finding-w001-unpinned",
+    "rule_id": "W001",
+    "category": "containerization",
+    "severity": "HIGH",
+    "title": "Container image tag is unpinned (latest)",
+    "file_path": "modules/fastqc.nf",
+    "line_number": 15,
+    "context": "process FASTQC {\n  container 'quay.io/biocontainers/fastqc:latest'\n  script:\n    \"fastqc $reads\"\n}"
+  }
+}

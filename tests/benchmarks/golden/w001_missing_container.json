@@ -1,0 +1,18 @@
+{
+  "id": "w001_missing_container",
+  "description": "Process definition lacking any container specification directive.",
+  "workflow_type": "nextflow",
+  "required_concepts": ["container"],
+  "required_any_of": [["docker", "singularity", "apptainer", "biocontainers"]],
+  "forbidden_concepts": ["ignore", "skip"],
+  "finding": {
+    "id": "finding-w001-missing",
+    "rule_id": "W001",
+    "category": "containerization",
+    "severity": "HIGH",
+    "title": "Missing container directive in process definition",
+    "file_path": "modules/samtools.nf",
+    "line_number": 10,
+    "context": "process SAMTOOLS_INDEX {\n  input:\n    path bam\n  output:\n    path '*.bai'\n  script:\n    \"samtools index ${bam}\"\n}"
+  }
+}
