@@ -4,7 +4,6 @@ This module houses the Typer application, global option callbacks,
 and CLI command routing.
 """
 
-import json
 import logging
 import os
 import sys
@@ -28,15 +27,13 @@ from workflow_clinic.exceptions import (
     UnsupportedWorkflowError,
 )
 from workflow_clinic.models.diagnosis import (
-    DiagnosisReport,
     Finding,
 )
 from workflow_clinic.parsers import ParserRegistry
 from workflow_clinic.reporting import (
+    GeneratedIssue,
     GitHubPublisher,
     GitHubPublisherError,
-    filter_new_findings,
-    generate_issues,
 )
 from workflow_clinic.rules import Severity
 from workflow_clinic.services import (
@@ -50,6 +47,12 @@ from workflow_clinic.services import (
     FixCoordinator,
     FixDependencies,
     FixResult,
+    PublishCallbacks,
+    PublishConfig,
+    PublishCoordinator,
+    PublishDependencies,
+    PublishMode,
+    PublishResult,
 )
 from workflow_clinic.services.coordinator import resolve_model
 from workflow_clinic.utils import clone_remote_repo, is_remote_url
@@ -412,8 +415,110 @@ def parse_selection(raw: str, max_index: int) -> list[int]:
     return indices
 
 
+def _prompt_issue_selection(
+    issues: list[GeneratedIssue],
+    workflow_name: str = "",
+    *,
+    all_issues: bool = False,
+) -> list[GeneratedIssue]:
+    """Render interactive selection table and prompt user for issue choices."""
+    title = (
+        f"Diagnostic Issue Groups for '{workflow_name}'"
+        if workflow_name
+        else "Diagnostic Issue Groups"
+    )
+    table = Table(title=title, show_lines=True)
+    table.add_column("Option", style="bold cyan", width=8)
+    table.add_column("Severity", style="bold", width=10)
+    table.add_column("Category", width=20)
+    table.add_column("Locations")
+
+    for idx, iss in enumerate(issues, 1):
+        sev_color = "red" if iss.severity in ("CRITICAL", "HIGH", "ERROR") else "yellow"
+        table.add_row(
+            f"[{idx}]",
+            f"[{sev_color}]{iss.severity}[/{sev_color}]",
+            iss.category.replace("_", " ").title(),
+            f"{len(iss.fingerprints)} location(s)",
+        )
+
+    console.print()
+    console.print(table)
+
+    is_tty = sys.stdin.isatty()
+    if all_issues or not is_tty:
+        if not is_tty and not all_issues:
+            console.print(
+                "[yellow]Non-interactive terminal detected — auto-selecting all findings.[/yellow]"
+            )
+        return issues
+
+    prompt_msg = f"Select issues to publish (e.g. 1,{len(issues)} or all) [all]"
+    raw_input_str = typer.prompt(prompt_msg, default="all")
+    selected_indices = parse_selection(raw_input_str, len(issues))
+    if not selected_indices:
+        err_console.print("[yellow]No valid issues selected. Exiting.[/yellow]")
+        raise typer.Exit(code=0)
+
+    return [issues[i] for i in selected_indices]
+
+
+def _display_publish_results(
+    result: PublishResult,
+    *,
+    preview: bool = False,
+    repo_name: str | None = None,
+) -> None:
+    """Render preview, dry run, published issues table, or local export confirmation."""
+    if result.mode == PublishMode.DRY_RUN:
+        console.print("\n[cyan]--- Issue Markdown Payload (Dry Run) ---[/cyan]\n")
+        console.print(result.combined_markdown)
+        console.print()
+        raise typer.Exit(code=0)
+
+    if preview:
+        console.print("\n[cyan]--- Issue Markdown Preview ---[/cyan]\n")
+        console.print(Markdown(result.combined_markdown))
+        console.print()
+
+    if result.mode == PublishMode.GITHUB:
+        if result.published_issues:
+            target_repo = repo_name or "GitHub"
+            console.print(
+                f"\n[bold green]✓[/bold green] Successfully published {len(result.published_issues)} issue(s) to GitHub repository '[bold]{target_repo}[/bold]':\n"
+            )
+            pub_table = Table(show_lines=True)
+            pub_table.add_column("Issue #", style="bold cyan", width=10)
+            pub_table.add_column("Title", width=35)
+            pub_table.add_column("URL", overflow="fold")
+
+            for res in result.published_issues:
+                pub_table.add_row(
+                    f"#{res.number}",
+                    res.title,
+                    f"[link={res.url}]{res.url}[/link]",
+                )
+            console.print(pub_table)
+            console.print("\n[bold]Direct Links:[/bold]")
+            for res in result.published_issues:
+                console.print(
+                    f" • [bold cyan]#{res.number}[/bold cyan]: {res.url}",
+                    soft_wrap=True,
+                )
+            console.print()
+        else:
+            err_console.print(
+                "[red]Error:[/red] Failed to publish any issues to GitHub."
+            )
+            raise typer.Exit(code=1)
+    elif result.local_output_path:
+        console.print(
+            f"\n[bold green]✓[/bold green] Exported {len(result.selected_issues)} issue group(s) to [bold]{escape(str(result.local_output_path))}[/bold]\n"
+        )
+
+
 @app.command(name="create-issue")
-def create_issue(  # noqa: C901, PLR0912, PLR0915
+def create_issue(
     target: Annotated[
         str,
         typer.Argument(
@@ -475,175 +580,87 @@ def create_issue(  # noqa: C901, PLR0912, PLR0915
     ] = Path("issue.md"),
 ) -> None:
     """Export grouped findings from diagnosis.json into GitHub issue markdown format or publish directly to GitHub."""
-    target_path = Path(target).resolve()
-    diag_path = target_path if target_path.is_file() else target_path / "diagnosis.json"
+    config = PublishConfig(
+        target=target,
+        all_issues=all_issues,
+        dry_run=dry_run,
+        preview=preview,
+        token=token,
+        repo=repo,
+        local=local,
+        output=output,
+    )
+    callbacks = PublishCallbacks(
+        on_error=lambda msg: err_console.print(f"[red]Error:[/red] {msg}"),
+        on_warning=lambda msg: err_console.print(f"[yellow]{msg}[/yellow]"),
+    )
+    deps = PublishDependencies(publisher_factory=GitHubPublisher)
+    coordinator = PublishCoordinator(config, callbacks=callbacks, dependencies=deps)
 
-    if not diag_path.exists():
+    try:
+        diag_path = coordinator.resolve_diagnosis_path()
+        report = coordinator.load_diagnosis(diag_path)
+    except FileNotFoundError as e:
+        target_path = Path(target).resolve()
+        dp = (
+            target_path
+            if target_path.is_file() and target_path.suffix == ".json"
+            else target_path / "diagnosis.json"
+        )
         err_console.print(
-            f"[red]Error:[/red] Could not find '[bold]{diag_path.name}[/bold]' at '{escape(str(diag_path.parent))}'."
+            f"[red]Error:[/red] Could not find '[bold]{dp.name}[/bold]' at '{escape(str(dp.parent))}'."
         )
         err_console.print(
             f"[bold]Tip:[/bold] Run [green]workflow-clinic examine {escape(target)}[/green] first to generate diagnostic findings."
         )
-        raise typer.Exit(code=1)
-
-    try:
-        raw_json = json.loads(diag_path.read_text(encoding="utf-8"))
-        report = DiagnosisReport.model_validate(raw_json)
+        raise typer.Exit(code=1) from e
     except Exception as e:
         err_console.print(
-            f"[red]Error:[/red] Failed to parse diagnosis report '{escape(str(diag_path))}': {escape(str(e))}"
+            f"[red]Error:[/red] Failed to parse diagnosis report '{escape(str(target))}': {escape(str(e))}"
         )
         raise typer.Exit(code=1) from e
 
-    token_val = token or os.getenv("GITHUB_TOKEN")
-    repo_val = repo or os.getenv("GITHUB_REPOSITORY")
-    use_github = not local and bool(token_val and repo_val)
+    try:
+        publisher, _ = coordinator.resolve_publisher()
+        existing_fingerprints = coordinator.fetch_active_fingerprints(publisher)
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise typer.Exit(code=1) from e
+    except GitHubPublisherError as e:
+        err_console.print(
+            f"[red]GitHub Authentication/API Error:[/red] {escape(str(e))}"
+        )
+        raise typer.Exit(code=1) from e
 
-    existing_fingerprints: set[str] = set()
-    publisher: GitHubPublisher | None = None
-
-    if not local and (token_val or repo_val):
-        if not token_val:
-            err_console.print(
-                "[red]Error:[/red] GitHub repository specified but GitHub token is missing. Provide via --token or GITHUB_TOKEN."
-            )
-            raise typer.Exit(code=1)
-        if not repo_val:
-            err_console.print(
-                "[red]Error:[/red] GitHub token specified but repository is missing. Provide via --repo or GITHUB_REPOSITORY."
-            )
-            raise typer.Exit(code=1)
-
-        try:
-            publisher = GitHubPublisher(token=token_val, repository=repo_val)
-            existing_fingerprints = publisher.fetch_active_fingerprints()
-        except GitHubPublisherError as e:
-            err_console.print(
-                f"[red]GitHub Authentication/API Error:[/red] {escape(str(e))}"
-            )
-            raise typer.Exit(code=1) from e
-
-    new_findings = filter_new_findings(report.findings, existing_fingerprints)
-    report_to_process = DiagnosisReport(
-        workflow_name=report.workflow_name,
-        findings=new_findings,
+    generated_issues, _ = coordinator.get_actionable_issues(
+        report, existing_fingerprints
     )
 
-    generated_issues = generate_issues(report_to_process)
     if not generated_issues:
         console.print(
             "\n[bold green]✓[/bold green] No new actionable findings to report!\n"
         )
         raise typer.Exit(code=0)
 
-    # Render interactive selection table
-    table = Table(
-        title=f"Diagnostic Issue Groups for '{report.workflow_name}'",
-        show_lines=True,
+    selected = _prompt_issue_selection(
+        generated_issues,
+        workflow_name=report.workflow_name,
+        all_issues=all_issues,
     )
-    table.add_column("Option", style="bold cyan", width=8)
-    table.add_column("Severity", style="bold", width=10)
-    table.add_column("Category", width=20)
-    table.add_column("Locations")
 
-    for idx, iss in enumerate(generated_issues, 1):
-        sev_color = "red" if iss.severity in ("CRITICAL", "HIGH", "ERROR") else "yellow"
-        table.add_row(
-            f"[{idx}]",
-            f"[{sev_color}]{iss.severity}[/{sev_color}]",
-            iss.category.replace("_", " ").title(),
-            f"{len(iss.fingerprints)} location(s)",
+    try:
+        result = coordinator.execute(selected_issues=selected)
+    except OSError as e:
+        err_console.print(
+            f"[red]Error:[/red] Could not write issue file to '{escape(str(output))}': {escape(str(e))}"
         )
+        raise typer.Exit(code=1) from e
 
-    console.print()
-    console.print(table)
-
-    # Determine selected indices
-    is_tty = sys.stdin.isatty()
-    if all_issues or not is_tty:
-        if not is_tty and not all_issues:
-            console.print(
-                "[yellow]Non-interactive terminal detected — auto-selecting all findings.[/yellow]"
-            )
-        selected_indices = list(range(len(generated_issues)))
-    else:
-        prompt_msg = (
-            f"Select issues to publish (e.g. 1,{len(generated_issues)} or all) [all]"
-        )
-        raw_input_str = typer.prompt(prompt_msg, default="all")
-        selected_indices = parse_selection(raw_input_str, len(generated_issues))
-        if not selected_indices:
-            err_console.print("[yellow]No valid issues selected. Exiting.[/yellow]")
-            raise typer.Exit(code=0)
-
-    selected_issues = [generated_issues[i] for i in selected_indices]
-    combined_markdown = "\n\n---\n\n".join(iss.body for iss in selected_issues)
-
-    if dry_run:
-        console.print("\n[cyan]--- Issue Markdown Payload (Dry Run) ---[/cyan]\n")
-        console.print(combined_markdown)
-        console.print()
-        raise typer.Exit(code=0)
-
-    if preview:
-        console.print("\n[cyan]--- Issue Markdown Preview ---[/cyan]\n")
-        console.print(Markdown(combined_markdown))
-        console.print()
-
-    # Online GitHub Publishing or Local File Export Fallback
-    if use_github and publisher is not None:
-        published_results = []
-        for iss in selected_issues:
-            try:
-                pub_info = publisher.publish_issue(iss)
-                published_results.append(pub_info)
-            except GitHubPublisherError as e:
-                err_console.print(
-                    f"[red]Failed to publish issue '{iss.title}':[/red] {escape(str(e))}"
-                )
-
-        if published_results:
-            console.print(
-                f"\n[bold green]✓[/bold green] Successfully published {len(published_results)} issue(s) to GitHub repository '[bold]{publisher.repository}[/bold]':\n"
-            )
-            pub_table = Table(show_lines=True)
-            pub_table.add_column("Issue #", style="bold cyan", width=10)
-            pub_table.add_column("Title", width=35)
-            pub_table.add_column("URL", overflow="fold")
-
-            for res in published_results:
-                pub_table.add_row(
-                    f"#{res.number}",
-                    res.title,
-                    f"[link={res.url}]{res.url}[/link]",
-                )
-            console.print(pub_table)
-            console.print("\n[bold]Direct Links:[/bold]")
-            for res in published_results:
-                console.print(
-                    f" • [bold cyan]#{res.number}[/bold cyan]: {res.url}",
-                    soft_wrap=True,
-                )
-            console.print()
-        else:
-            err_console.print(
-                "[red]Error:[/red] Failed to publish any issues to GitHub."
-            )
-            raise typer.Exit(code=1)
-    else:
-        # Export to local output file
-        try:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(combined_markdown + "\n", encoding="utf-8")
-            console.print(
-                f"\n[bold green]✓[/bold green] Exported {len(selected_issues)} issue group(s) to [bold]{escape(str(output))}[/bold]\n"
-            )
-        except OSError as e:
-            err_console.print(
-                f"[red]Error:[/red] Could not write issue file to '{escape(str(output))}': {escape(str(e))}"
-            )
-            raise typer.Exit(code=1) from e
+    _display_publish_results(
+        result,
+        preview=preview,
+        repo_name=publisher.repository if publisher else None,
+    )
 
 
 def _display_fix_results(result: FixResult) -> None:
