@@ -12,10 +12,7 @@ from typing import Annotated
 
 import typer
 from dotenv import load_dotenv
-from rich.console import Console
-from rich.markdown import Markdown
 from rich.markup import escape
-from rich.table import Table
 
 from workflow_clinic import __version__
 from workflow_clinic.critic import AICriticAgent
@@ -26,38 +23,52 @@ from workflow_clinic.exceptions import (
     ParserError,
     UnsupportedWorkflowError,
 )
-from workflow_clinic.models.diagnosis import (
-    Finding,
-)
 from workflow_clinic.parsers import ParserRegistry
 from workflow_clinic.reporting import (
-    GeneratedIssue,
     GitHubPublisher,
     GitHubPublisherError,
 )
-from workflow_clinic.rules import Severity
 from workflow_clinic.services import (
     ExamineCallbacks,
     ExamineConfig,
     ExamineCoordinator,
     ExamineDependencies,
-    ExamineResult,
     FixCallbacks,
     FixConfig,
     FixCoordinator,
     FixDependencies,
-    FixResult,
     PublishCallbacks,
     PublishConfig,
     PublishCoordinator,
     PublishDependencies,
-    PublishMode,
-    PublishResult,
 )
 from workflow_clinic.services.coordinator import resolve_model
+from workflow_clinic.ui import (
+    console,
+    display_enhance_status,
+    display_examine_results,
+    display_fix_results,
+    display_models_table,
+    display_publish_results,
+    err_console,
+    parse_selection,  # noqa: F401
+    prompt_category_selection,
+    prompt_issue_selection,
+    verify_github_repo,
+)
 from workflow_clinic.utils import clone_remote_repo, is_remote_url
+from workflow_clinic.utils.llm import PROVIDER_MODEL_MAP  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+# Backward-compatibility aliases for tests and external callers
+_display_examine_results = display_examine_results
+_display_enhance_status = display_enhance_status
+_display_fix_results = display_fix_results
+_display_publish_results = display_publish_results
+_prompt_issue_selection = prompt_issue_selection
+_prompt_category_selection = prompt_category_selection
+_verify_github_repo = verify_github_repo
 
 # Create the Typer application instance
 app = typer.Typer(
@@ -65,9 +76,6 @@ app = typer.Typer(
     help="AI-Powered Cloudification of Bioinformatics Workflows",
     no_args_is_help=True,
 )
-
-console = Console()
-err_console = Console(stderr=True)
 
 
 def setup_logging(*, verbose: bool) -> None:
@@ -118,126 +126,15 @@ def main(
     setup_logging(verbose=verbose)
 
 
-_SEVERITY_COLORS: dict[Severity, str] = {
-    Severity.INFO: "blue",
-    Severity.WARNING: "yellow",
-    Severity.ERROR: "red",
-}
-
-PROVIDER_MODEL_MAP = [
-    ("GEMINI_API_KEY", "gemini/gemini-3.6-flash"),
-    ("OPENAI_API_KEY", "gpt-4o-mini"),
-    ("ANTHROPIC_API_KEY", "claude-3-5-sonnet-20240620"),
-    ("MISTRAL_API_KEY", "mistral/mistral-large-latest"),
-    ("GROQ_API_KEY", "groq/llama-3.1-8b-instant"),
-    ("COHERE_API_KEY", "cohere/command-r"),
-]
-
-
 def _resolve_model(explicit_model: str | None, api_key: str | None) -> str:
     """Resolve the LiteLLM model using CLI flags, env vars, or auto-detection."""
     return resolve_model(explicit_model, api_key, custom_logger=logger)
 
 
-def _display_enhance_status(result: ExamineResult, count: int) -> None:
-    """Display AI Critic enhance summary status in terminal."""
-    if result.enhance_failed:
-        if result.enhance_error:
-            err_console.print(
-                f"[yellow]AI Critic enhancement failed: {result.enhance_error}. Using offline fallback.[/yellow]"
-            )
-        err_console.print(
-            f"[yellow]⚠️  AI Critic Enhancement Failed: Using offline Knowledge Store. "
-            f"All {count} findings using offline Knowledge Store.[/yellow]"
-        )
-    elif not result.has_key:
-        console.print(
-            f"[green]✓[/green] Offline remediation guidance added to {count}/{count} findings (Knowledge Store fallback)"
-        )
-    elif result.fallback_count == count and count > 0:
-        console.print(
-            f"[yellow]⚠️  AI Critic Enhancement Failed: All {count} findings fell back to the offline Knowledge Store.[/yellow]"
-        )
-    elif result.fallback_count > 0:
-        console.print(
-            f"[yellow]⚠️  AI Critic Partial Failure: {result.fallback_count}/{count} findings fell back to the offline Knowledge Store.[/yellow]"
-        )
-    else:
-        console.print(
-            f"[green]✓[/green] AI remediation guidance added to {count}/{count} findings (model: {result.resolved_model})"
-        )
-
-
-def _display_examine_results(result: ExamineResult, *, enhance: bool) -> None:
-    """Render diagnostic table, counts, and exit with code."""
-    findings = result.report.findings
-    if not findings:
-        console.print(
-            "\n[bold green]✓[/bold green] No issues found — "
-            "workflow is clean and cloud-ready!\n"
-        )
-        raise typer.Exit(code=0)
-
-    table = Table(
-        title=f"Diagnostic Findings for '{result.bundle.metadata.name}'",
-        show_lines=True,
-    )
-    table.add_column("Severity", style="bold", width=10)
-    table.add_column("Rule", width=10)
-    table.add_column("Location", style="cyan", no_wrap=True)
-    table.add_column("Process", width=18)
-    table.add_column("Message")
-
-    for finding in findings:
-        try:
-            sev_enum = Severity(finding.severity.lower())
-            color = _SEVERITY_COLORS.get(sev_enum, "white")
-        except ValueError:
-            color = "white"
-
-        loc_str = ""
-        if finding.file_path:
-            loc_name = Path(finding.file_path).name
-            loc_str = (
-                f"{loc_name}:{finding.line_number}" if finding.line_number else loc_name
-            )
-
-        table.add_row(
-            f"[{color}]{finding.severity.upper()}[/{color}]",
-            finding.rule_id,
-            loc_str or "—",
-            finding.process_name or "—",
-            finding.message,
-        )
-
-    console.print()
-    console.print(table)
-
-    n_err = sum(1 for f in findings if f.severity.lower() == "error")
-    n_warn = sum(1 for f in findings if f.severity.lower() == "warning")
-    n_info = sum(1 for f in findings if f.severity.lower() == "info")
-    console.print(
-        f"\n[bold]Summary:[/bold] {n_err} error(s), "
-        f"{n_warn} warning(s), {n_info} info(s)"
-    )
-
-    if enhance:
-        _display_enhance_status(result, len(findings))
-
-    console.print()
-    exit_code = 1 if n_err > 0 else 0
-    raise typer.Exit(code=exit_code)
-
-
 @app.command()
 def list_models() -> None:
     """List supported LiteLLM model strings and their required environment variables."""
-    table = Table(title="Supported AI Models")
-    table.add_column("Provider Key")
-    table.add_column("Default Model")
-    for env_var, model in PROVIDER_MODEL_MAP:
-        table.add_row(env_var, model)
-    console.print(table)
+    display_models_table()
 
 
 @app.command()
@@ -373,148 +270,7 @@ def examine(
         )
         raise typer.Exit(code=1) from e
 
-    _display_examine_results(result, enhance=enhance)
-
-
-def parse_selection(raw: str, max_index: int) -> list[int]:
-    """Parse interactive selection string into 0-indexed integer list.
-
-    Supports comma lists ("1, 3"), ranges ("1-3"), "all", and default empty.
-    Ignores out-of-bounds indices.
-    """
-
-    clean = raw.strip().lower()
-    if not clean or clean in ("all", "a"):
-        return list(range(max_index))
-
-    indices: list[int] = []
-    for item in clean.split(","):
-        part = item.strip()
-        if not part:
-            continue
-        if "-" in part:
-            try:
-                start_str, end_str = part.split("-", maxsplit=1)
-                start = int(start_str.strip())
-                end = int(end_str.strip())
-                for i in range(start, end + 1):
-                    idx = i - 1
-                    if 0 <= idx < max_index and idx not in indices:
-                        indices.append(idx)
-            except ValueError:
-                continue
-        else:
-            try:
-                val = int(part)
-                idx = val - 1
-                if 0 <= idx < max_index and idx not in indices:
-                    indices.append(idx)
-            except ValueError:
-                continue
-
-    return indices
-
-
-def _prompt_issue_selection(
-    issues: list[GeneratedIssue],
-    workflow_name: str = "",
-    *,
-    all_issues: bool = False,
-) -> list[GeneratedIssue]:
-    """Render interactive selection table and prompt user for issue choices."""
-    title = (
-        f"Diagnostic Issue Groups for '{workflow_name}'"
-        if workflow_name
-        else "Diagnostic Issue Groups"
-    )
-    table = Table(title=title, show_lines=True)
-    table.add_column("Option", style="bold cyan", width=8)
-    table.add_column("Severity", style="bold", width=10)
-    table.add_column("Category", width=20)
-    table.add_column("Locations")
-
-    for idx, iss in enumerate(issues, 1):
-        sev_color = "red" if iss.severity in ("CRITICAL", "HIGH", "ERROR") else "yellow"
-        table.add_row(
-            f"[{idx}]",
-            f"[{sev_color}]{iss.severity}[/{sev_color}]",
-            iss.category.replace("_", " ").title(),
-            f"{len(iss.fingerprints)} location(s)",
-        )
-
-    console.print()
-    console.print(table)
-
-    is_tty = sys.stdin.isatty()
-    if all_issues or not is_tty:
-        if not is_tty and not all_issues:
-            console.print(
-                "[yellow]Non-interactive terminal detected — auto-selecting all findings.[/yellow]"
-            )
-        return issues
-
-    prompt_msg = f"Select issues to publish (e.g. 1,{len(issues)} or all) [all]"
-    raw_input_str = typer.prompt(prompt_msg, default="all")
-    selected_indices = parse_selection(raw_input_str, len(issues))
-    if not selected_indices:
-        err_console.print("[yellow]No valid issues selected. Exiting.[/yellow]")
-        raise typer.Exit(code=0)
-
-    return [issues[i] for i in selected_indices]
-
-
-def _display_publish_results(
-    result: PublishResult,
-    *,
-    preview: bool = False,
-    repo_name: str | None = None,
-) -> None:
-    """Render preview, dry run, published issues table, or local export confirmation."""
-    if result.mode == PublishMode.DRY_RUN:
-        console.print("\n[cyan]--- Issue Markdown Payload (Dry Run) ---[/cyan]\n")
-        console.print(result.combined_markdown)
-        console.print()
-        raise typer.Exit(code=0)
-
-    if preview:
-        console.print("\n[cyan]--- Issue Markdown Preview ---[/cyan]\n")
-        console.print(Markdown(result.combined_markdown))
-        console.print()
-
-    if result.mode == PublishMode.GITHUB:
-        if result.published_issues:
-            target_repo = repo_name or "GitHub"
-            console.print(
-                f"\n[bold green]✓[/bold green] Successfully published {len(result.published_issues)} issue(s) to GitHub repository '[bold]{target_repo}[/bold]':\n"
-            )
-            pub_table = Table(show_lines=True)
-            pub_table.add_column("Issue #", style="bold cyan", width=10)
-            pub_table.add_column("Title", width=35)
-            pub_table.add_column("URL", overflow="fold")
-
-            for res in result.published_issues:
-                pub_table.add_row(
-                    f"#{res.number}",
-                    res.title,
-                    f"[link={res.url}]{res.url}[/link]",
-                )
-            console.print(pub_table)
-            console.print("\n[bold]Direct Links:[/bold]")
-            for res in result.published_issues:
-                console.print(
-                    f" • [bold cyan]#{res.number}[/bold cyan]: {res.url}",
-                    soft_wrap=True,
-                )
-            console.print()
-        else:
-            err_console.print(
-                "[red]Error:[/red] Failed to publish any issues to GitHub."
-            )
-            raise typer.Exit(code=1)
-    elif result.local_output_path:
-        console.print(
-            f"\n[bold green]✓[/bold green] Exported {len(result.selected_issues)} issue group(s) to [bold]{escape(str(result.local_output_path))}[/bold]\n"
-        )
+    display_examine_results(result, enhance=enhance)
 
 
 @app.command(name="create-issue")
@@ -642,7 +398,7 @@ def create_issue(
         )
         raise typer.Exit(code=0)
 
-    selected = _prompt_issue_selection(
+    selected = prompt_issue_selection(
         generated_issues,
         workflow_name=report.workflow_name,
         all_issues=all_issues,
@@ -656,139 +412,11 @@ def create_issue(
         )
         raise typer.Exit(code=1) from e
 
-    _display_publish_results(
+    display_publish_results(
         result,
         preview=preview,
         repo_name=publisher.repository if publisher else None,
     )
-
-
-def _display_fix_results(result: FixResult) -> None:
-    """Render proposed fix diffs or completion summary and exit."""
-    session = result.session
-    if not session.proposals:
-        console.print(
-            "\n[bold yellow]![/bold yellow] No registered fixers available for the selected findings yet.\n"
-        )
-        raise typer.Exit(code=0)
-
-    if result.dry_run:
-        console.print(
-            f"\n[cyan]--- Workflow Doctor Dry Run ({len(session.proposals)} proposed fix(es)) ---[/cyan]\n"
-        )
-        diff_table = Table(show_lines=True)
-        diff_table.add_column("Rule", style="bold cyan", width=8)
-        diff_table.add_column("Target File", width=20)
-        diff_table.add_column("Layer Strategy", style="bold yellow", width=14)
-        diff_table.add_column("Rationale", overflow="fold")
-
-        for prop in session.proposals:
-            prop_path = Path(prop.target_file)
-            rel_file = (
-                os.path.relpath(prop_path, result.root_dir)
-                if prop_path.is_absolute()
-                else str(prop_path)
-            )
-            diff_table.add_row(
-                prop.rule_id,
-                rel_file,
-                prop.strategy_layer.name,
-                prop.explanation,
-            )
-
-        console.print(diff_table)
-        console.print(
-            f"\n[bold green]✓[/bold green] Dry-run complete for session "
-            f"[bold cyan]{session.session_id[:8]}[/bold cyan] ({len(session.proposals)} proposal(s) ready).\n"
-        )
-        raise typer.Exit(code=0)
-
-    console.print(
-        f"\n[bold green]✓[/bold green] Workflow Doctor completed session "
-        f"[bold cyan]{session.session_id[:8]}[/bold cyan]: "
-        f"{session.applied_count}/{len(session.proposals)} fix(es) applied successfully.\n"
-    )
-
-
-def _verify_github_repo(token: str | None, repo: str | None) -> None:
-    """Validate GitHub token and repository credentials if provided."""
-    token_val = token or os.getenv("GITHUB_TOKEN")
-    repo_val = repo or os.getenv("GITHUB_REPOSITORY")
-    if not repo_val and not token:
-        return
-
-    if not token_val:
-        err_console.print(
-            "[red]Error:[/red] GitHub repository specified but GitHub token is missing. Provide via --token or GITHUB_TOKEN."
-        )
-        raise typer.Exit(code=1)
-    if not repo_val:
-        err_console.print(
-            "[red]Error:[/red] GitHub token specified but repository is missing. Provide via --repo or GITHUB_REPOSITORY."
-        )
-        raise typer.Exit(code=1)
-    try:
-        publisher = GitHubPublisher(token=token_val, repository=repo_val)
-        active_fps = publisher.fetch_active_fingerprints()
-        if active_fps:
-            logger.info(
-                "Fetched %d active fingerprints from GitHub repository %s",
-                len(active_fps),
-                repo_val,
-            )
-    except GitHubPublisherError as e:
-        err_console.print(
-            f"[red]GitHub Authentication/API Error:[/red] {escape(str(e))}"
-        )
-        raise typer.Exit(code=1) from e
-
-
-def _prompt_category_selection(
-    coordinator: FixCoordinator,
-    actionable_findings: list[Finding],
-    workflow_name: str,
-) -> list[Finding]:
-    """Display interactive category table and prompt user for selection."""
-    grouped = coordinator.group_findings_by_category(actionable_findings)
-    categories = list(grouped.keys())
-
-    table = Table(
-        title=f"Diagnostic Categories to Repair for '{workflow_name}'",
-        show_lines=True,
-    )
-    table.add_column("Option", style="bold cyan", width=8)
-    table.add_column("Category Domain", width=22)
-    table.add_column("Rules", style="bold green", width=16)
-    table.add_column("Findings Count", style="bold yellow", width=16)
-
-    for idx, cat in enumerate(categories, 1):
-        cat_findings = grouped[cat]
-        cat_rules = sorted({f.rule_id for f in cat_findings if f.rule_id})
-        rules_str = ", ".join(cat_rules) if cat_rules else "-"
-        table.add_row(
-            f"[{idx}]",
-            cat.replace("_", " ").title(),
-            rules_str,
-            f"{len(cat_findings)} issue(s)",
-        )
-
-    console.print()
-    console.print(table)
-
-    prompt_msg = (
-        f"Select category domains to fix (e.g. 1,{len(categories)} or all) [all]"
-    )
-    raw_input_str = typer.prompt(prompt_msg, default="all")
-    selected_indices = parse_selection(raw_input_str, len(categories))
-    if not selected_indices:
-        err_console.print(
-            "[yellow]No valid category domains selected. Exiting.[/yellow]"
-        )
-        raise typer.Exit(code=0)
-
-    selected_categories = {categories[i] for i in selected_indices}
-    selected_set = {id(f) for cat in selected_categories for f in grouped[cat]}
-    return [f for f in actionable_findings if id(f) in selected_set]
 
 
 @app.command(name="fix")
@@ -895,7 +523,7 @@ def fix(
         )
         raise typer.Exit(code=1) from e
 
-    _verify_github_repo(token, repo)
+    verify_github_repo(token, repo)
 
     try:
         actionable_findings = coordinator.get_actionable_findings(
@@ -925,9 +553,9 @@ def fix(
             )
         selected_findings = actionable_findings
     else:
-        selected_findings = _prompt_category_selection(
+        selected_findings = prompt_category_selection(
             coordinator, actionable_findings, report.workflow_name
         )
 
     result = coordinator.execute(selected_findings=selected_findings)
-    _display_fix_results(result)
+    display_fix_results(result)
